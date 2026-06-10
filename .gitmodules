@@ -1,0 +1,3 @@
+[submodule "src/ros2-lidar-object-detection"]
+	path = src/ros2-lidar-object-detection
+	url = https://github.com/ITIGP-ROS/ros2-lidar-object-detection
