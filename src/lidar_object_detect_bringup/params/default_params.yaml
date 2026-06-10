@@ -1,0 +1,7 @@
+object3d_visualizer_node:
+  ros__parameters:
+    confidence_threshold: 0.5
+
+lidar_object_detector_node:
+  ros__parameters:
+    output_frame_id: "velo_link"
