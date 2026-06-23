@@ -1,0 +1,7 @@
+camera:
+  ros__parameters:
+    video_device: "/dev/video0"
+    image_size: [640, 640]
+    pixel_format: "YUYV"
+    time_per_frame: [1, 30]
+    publish_image: true

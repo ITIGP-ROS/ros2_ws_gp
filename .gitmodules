@@ -2,3 +2,8 @@
 	path = src/ros2-lidar-object-detection
 	url = https://github.com/ITIGP-ROS/ros2-lidar-object-detection
 	branch = master
+
+[submodule "src/ros2_yolos_cpp"]
+	path = src/ros2_yolos_cpp
+	url = https://github.com/Geekgineer/ros2_yolos_cpp
+	branch = main
