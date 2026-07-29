@@ -9,7 +9,7 @@ public:
   explicit YoloClassCanNode(const rclcpp::NodeOptions& options);
 
 private:
-  void onDetections(const vision_msgs::msg::Detection2DArray::SharedPtr msg);
+  void onDetections(const vision_msgs::msg::Detection2DArray::ConstSharedPtr& msg);
 
   rclcpp::Subscription<vision_msgs::msg::Detection2DArray>::SharedPtr sub_;
   std::unique_ptr<CanComms> can_;

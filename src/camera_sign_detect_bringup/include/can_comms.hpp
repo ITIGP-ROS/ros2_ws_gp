@@ -11,6 +11,7 @@
 #include <cstring>
 #include <string>
 #include <iostream>
+#include <cstdint> 
 
 class CanComms
 {

@@ -30,7 +30,7 @@ YoloClassCanNode::YoloClassCanNode(const rclcpp::NodeOptions& options)
 }
 
 void YoloClassCanNode::onDetections(
-    const vision_msgs::msg::Detection2DArray::SharedPtr msg) {
+    const vision_msgs::msg::Detection2DArray::ConstSharedPtr& msg) {
   
   std::unordered_set<int> unique_classes;
 
