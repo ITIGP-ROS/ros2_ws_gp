@@ -51,6 +51,13 @@ def generate_launch_description():
                 extra_arguments=[{'use_intra_process_comms': True}],
                 
             ),
+            ComposableNode(
+                package='camera_sign_detect_bringup',
+                plugin='YoloClassCanNode',
+                name='yolo_class_can',
+                parameters=[os.path.join(pkg_share, 'params', 'can_params.yaml')],
+                extra_arguments=[{'use_intra_process_comms': True}],
+            ),
         ],
         output='screen',
     )

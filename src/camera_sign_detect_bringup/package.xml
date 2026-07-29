@@ -26,6 +26,9 @@
   <exec_depend>v4l2_camera</exec_depend>
   <exec_depend>ros2_yolos_cpp</exec_depend>
 
+  <depend>rclcpp</depend>
+  <depend>vision_msgs</depend>
+
   <test_depend>ament_lint_auto</test_depend>
   <test_depend>ament_lint_common</test_depend>
 

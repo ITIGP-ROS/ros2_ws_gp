@@ -4,4 +4,4 @@ object3d_visualizer_node:
 
 lidar_object_detector_node:
   ros__parameters:
-    output_frame_id: "velo_link"
+    output_frame_id: "livox_frame"
