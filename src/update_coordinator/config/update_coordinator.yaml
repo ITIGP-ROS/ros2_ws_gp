@@ -1,0 +1,6 @@
+update_coordinator:
+  ros__parameters:
+    secoc_key: "/etc/ota_secoc.key"
+    can_iface: "can0"
+    state_dir: "/var/lib/update_coordinator"
+    timeout_sec: 300.0
