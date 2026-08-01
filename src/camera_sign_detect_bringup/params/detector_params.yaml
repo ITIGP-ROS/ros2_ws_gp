@@ -4,7 +4,6 @@ yolos_detector:
     labels_path: "" # overritten by the launch file
     conf_threshold: 0.4
     nms_threshold: 0.45
-    use_gpu: false
     publish_debug_image: false
     publish_timing: false
     ## the Topics to subscribe and publish are not params 

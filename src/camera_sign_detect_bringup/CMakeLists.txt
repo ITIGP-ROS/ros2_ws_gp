@@ -48,9 +48,29 @@ install(DIRECTORY
   params
   DESTINATION share/${PROJECT_NAME}/
 )
-install(DIRECTORY
-  models
-  DESTINATION share/${PROJECT_NAME}/
+
+# Inference backend baked into config/backend (default ONNX).
+# Yocto: PACKAGECONFIG trt passes -DCAMERA_SIGN_DETECT_BACKEND=trt.
+set(CAMERA_SIGN_DETECT_BACKEND "onnx" CACHE STRING "Inference backend: onnx (ros2_yolos_cpp) or trt (ros2_yolos_cpp_trt)")
+set_property(CACHE CAMERA_SIGN_DETECT_BACKEND PROPERTY STRINGS onnx trt)
+
+file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/backend ${CAMERA_SIGN_DETECT_BACKEND})
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/backend
+  DESTINATION share/${PROJECT_NAME}/config
 )
+
+if(CAMERA_SIGN_DETECT_BACKEND STREQUAL "trt")
+  install(FILES
+    models/best.engine
+    models/classes.names
+    DESTINATION share/${PROJECT_NAME}/models
+  )
+else()
+  install(FILES
+    models/best.onnx
+    models/classes.names
+    DESTINATION share/${PROJECT_NAME}/models
+  )
+endif()
 
 ament_package()

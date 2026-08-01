@@ -25,6 +25,7 @@
   <exec_depend>rclcpp_components</exec_depend>
   <exec_depend>v4l2_camera</exec_depend>
   <exec_depend>ros2_yolos_cpp</exec_depend>
+  <exec_depend>ros2_yolos_cpp_trt</exec_depend>
 
   <depend>rclcpp</depend>
   <depend>vision_msgs</depend>

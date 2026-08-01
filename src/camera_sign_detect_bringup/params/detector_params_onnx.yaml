@@ -1,0 +1,4 @@
+yolos_detector:
+  ros__parameters:
+    # ONNX Runtime backend
+    use_gpu: false

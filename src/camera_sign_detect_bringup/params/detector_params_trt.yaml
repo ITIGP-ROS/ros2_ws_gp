@@ -1,0 +1,4 @@
+yolos_detector:
+  ros__parameters:
+    # TensorRT backend: -1 = GPU engine, 0/1 = DLA core engine
+    dla_core: -1
