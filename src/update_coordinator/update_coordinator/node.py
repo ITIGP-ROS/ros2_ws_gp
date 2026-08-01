@@ -13,18 +13,27 @@ from rclpy.executors import SingleThreadedExecutor
 from std_srvs.srv import Trigger
 
 from .secoc_utils import (
-    load_key, FvStore, secoc_verify,
-    can_open, can_recv, SECOC_FRAME_LEN
+    load_key, FvStore, secoc_verify, secoc_build,
+    can_open, can_recv, can_send, SECOC_FRAME_LEN
 )
 
-CAN_ID_UPDATE_CLUSTER = 0x320
-CAN_ID_UPDATE_EDGE    = 0x321
+CAN_ID_OTA_REQ         = 0x300   # cluster/host -> Jetson (request / running)
+CAN_ID_OTA_APPROVE     = 0x301   # Jetson -> cluster/host (approve / deny)
+CAN_ID_ECU_OTA_REQ     = 0x310   # ESP32 -> Jetson (request / running)
+CAN_ID_ECU_OTA_APPROVE = 0x311   # Jetson -> ESP32 (approve / deny)
 
-DID_UPDATE_CLUSTER = 4
-DID_UPDATE_EDGE    = 5
+OTA_REQ_MAGIC = 0xA5
+OTA_RUN_MAGIC = 0x5A
 
-CMD_START = 0x01
-CMD_DONE  = 0x02
+DID_CLUSTER_REQUEST = 1
+DID_CLUSTER_RUNNING = 2
+DID_CLUSTER_APPROVE = 3
+
+DID_ECU_REQUEST = 4
+DID_ECU_RUNNING = 5
+DID_ECU_APPROVE = 6
+
+VERDICT_APPROVE = 1
 
 UPDATE_TIMEOUT_S = 300.0
 STATE_DIR = "/var/lib/update_coordinator"
@@ -72,7 +81,8 @@ class UpdateCoordinator(Node):
 
         self.get_logger().info(
             f"Coordinator ready on {iface} | "
-            f"cluster=0x{CAN_ID_UPDATE_CLUSTER:03X} edge=0x{CAN_ID_UPDATE_EDGE:03X}"
+            f"cluster=0x{CAN_ID_OTA_REQ:03X}->0x{CAN_ID_OTA_APPROVE:03X} "
+            f"ecu=0x{CAN_ID_ECU_OTA_REQ:03X}->0x{CAN_ID_ECU_OTA_APPROVE:03X}"
         )
 
     def _can_loop(self):
@@ -97,11 +107,29 @@ class UpdateCoordinator(Node):
         if dlc < SECOC_FRAME_LEN:
             return
 
-        if can_id == CAN_ID_UPDATE_CLUSTER:
-            did, name = DID_UPDATE_CLUSTER, "cluster"
-        elif can_id == CAN_ID_UPDATE_EDGE:
-            did, name = DID_UPDATE_EDGE, "edge"
+        flows = {
+            CAN_ID_OTA_REQ: (
+                "cluster", DID_CLUSTER_REQUEST, DID_CLUSTER_RUNNING,
+                DID_CLUSTER_APPROVE, CAN_ID_OTA_APPROVE,
+            ),
+            CAN_ID_ECU_OTA_REQ: (
+                "esp32", DID_ECU_REQUEST, DID_ECU_RUNNING,
+                DID_ECU_APPROVE, CAN_ID_ECU_OTA_APPROVE,
+            ),
+        }
+        flow = flows.get(can_id)
+        if flow is None:
+            return
+
+        name, did_req, did_run, did_appr, appr_can_id = flow
+        magic = data[0]
+
+        if magic == OTA_REQ_MAGIC:
+            did, what = did_req, "REQUEST"
+        elif magic == OTA_RUN_MAGIC:
+            did, what = did_run, "RUNNING"
         else:
+            self.get_logger().warn(f"{name} unknown magic 0x{magic:02X} on 0x{can_id:03X}")
             return
 
         payload, res = secoc_verify(self._key, self._store, did, data)
@@ -109,18 +137,22 @@ class UpdateCoordinator(Node):
             self.get_logger().warn(f"SecOC REJECT from {name}: {res}")
             return
 
-        cmd = payload[0]
-        if cmd == CMD_START:
+        slot = payload[1]
+
+        if what == "REQUEST":
+            frame, fv = secoc_build(self._key, self._store, did_appr,
+                                    bytes([VERDICT_APPROVE, slot]))
+            can_send(self.can_sock, appr_can_id, frame)
             self.active_ecus[name] = time.time()
-            self.get_logger().info(f"{name} START updating")
-        elif cmd == CMD_DONE:
+            self.get_logger().info(
+                f"{name} REQUEST slot={slot} -> APPROVE on 0x{appr_can_id:03X} (fv={fv})"
+            )
+        else:
             if name in self.active_ecus:
                 del self.active_ecus[name]
-                self.get_logger().info(f"{name} DONE updating")
             else:
-                self.get_logger().warn(f"{name} sent DONE but was not active")
-        else:
-            self.get_logger().warn(f"{name} unknown cmd 0x{cmd:02X}")
+                self.get_logger().warn(f"{name} sent RUNNING but was not active")
+            self.get_logger().info(f"{name} RUNNING on slot={slot} — update complete")
 
         self._update_lock_state()
 

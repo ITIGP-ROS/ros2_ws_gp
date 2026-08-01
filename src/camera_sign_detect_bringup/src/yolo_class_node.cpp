@@ -7,7 +7,7 @@ YoloClassCanNode::YoloClassCanNode(const rclcpp::NodeOptions& options)
   declare_parameter("can_interface", "can0");
   declare_parameter("detections_topic", "/detections");
   declare_parameter("conf_threshold", 0.5);
-  declare_parameter("can_id", 515);  // 0x203 decimal
+  declare_parameter("can_id", 533);  // 0x215 decimal
 
   const std::string iface = get_parameter("can_interface").as_string();
   const std::string topic = get_parameter("detections_topic").as_string();

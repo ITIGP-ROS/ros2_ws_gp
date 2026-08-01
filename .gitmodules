@@ -7,3 +7,7 @@
 	path = src/ros2_yolos_cpp
 	url = https://github.com/Geekgineer/ros2_yolos_cpp
 	branch = main
+[submodule "src/ros2_yolos_cpp_trt"]
+	path = src/ros2_yolos_cpp_trt
+	url = https://github.com/YouhanaBeshay/ros2_yolos_cpp_trt.git
+	branch = dev
