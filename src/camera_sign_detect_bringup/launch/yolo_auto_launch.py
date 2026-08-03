@@ -102,15 +102,16 @@ def generate_launch_description():
         output='screen',
     )
 
-    # Wait for container (sleep 3 here), then configure
+    # Wait for container/node discovery (DDS can take several seconds),
+    # then configure. Retry until the transition succeeds (max ~30 s).
     configure_detector = ExecuteProcess(
-        cmd=['bash', '-c', 'sleep 3 && ros2 lifecycle set /yolos_detector configure'],
+        cmd=['bash', '-c', 'for i in $(seq 1 30); do ros2 lifecycle set /yolos_detector configure && exit 0; sleep 1; done; exit 1'],
         output='screen',
     )
 
     # Activate after configure completes (OnExecutionComplete)
     activate_detector = ExecuteProcess(
-        cmd=['ros2', 'lifecycle', 'set', '/yolos_detector', 'activate'],
+        cmd=['bash', '-c', 'for i in $(seq 1 30); do ros2 lifecycle set /yolos_detector activate && exit 0; sleep 1; done; exit 1'],
         output='screen',
     )
 
