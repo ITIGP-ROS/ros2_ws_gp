@@ -4,3 +4,19 @@ update_coordinator:
     can_iface: "can0"
     state_dir: "/var/lib/update_coordinator"
     timeout_sec: 300.0
+
+    # Driver approval for cluster/ESP32 updates. The prompt appears on the IVI
+    # head unit via the /run/ota-approval spool; approving locks the vehicle
+    # (emergency stop) for the duration, denying leaves it driving.
+    #
+    # Set require_approval to false only for bench work with no head unit
+    # attached — it restores unconditional automatic approval.
+    require_approval: true
+    approval_dir: "/run/ota-approval"
+    ui_alive_max_age_s: 10.0
+
+    # What happens when the head unit is up but never answers. "approve" keeps
+    # this consistent with the head unit's own auto-accept and with
+    # ivi_ota_agent.sh's ON_NO_UI. Note what that means: approval here is
+    # advisory. Anyone who can stop the IVI app gets automatic updates back.
+    on_no_verdict: "approve"

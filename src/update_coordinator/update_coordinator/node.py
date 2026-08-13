@@ -2,9 +2,11 @@
 
 import os
 import sys
+import json
 import time
 import queue
 import threading
+from collections import namedtuple
 from pathlib import Path
 
 import rclpy
@@ -34,9 +36,73 @@ DID_ECU_RUNNING = 5
 DID_ECU_APPROVE = 6
 
 VERDICT_APPROVE = 1
+VERDICT_DENY    = 0
 
 UPDATE_TIMEOUT_S = 300.0
 STATE_DIR = "/var/lib/update_coordinator"
+
+# --------------------------------------------------------------------------
+# HUMAN APPROVAL
+#
+# A REQUEST used to be answered with APPROVE the instant its SecOC verified.
+# Now it is put in front of the driver first, and only an approval locks the
+# vehicle. Deny puts a 0 on the bus, nothing is locked, and the car keeps
+# driving — both ECUs already fail closed on a deny, so no firmware change was
+# needed on either side.
+#
+# The transport is the file spool the IVI head unit already watches. See
+# IVI/OTA_APPROVAL_PROTOCOL.md; this node is a third producer alongside
+# ivi_ota_agent.sh. Files rather than a topic because the head unit is a
+# separate image that does not run ROS.
+#
+# THE ASYMMETRY THAT MATTERS: asking costs time, and the two requesters give us
+# wildly different amounts of it.
+#
+#   cluster  0x300  the QNX bridge waits 60 s   (mcp2515_can_udp.c,
+#                                                OTA_APPROVE_TIMEOUT_S)
+#   esp32    0x310  the ECU waits 5 s, once     (ECU/ESP32/src/logs/can.c,
+#                                                k_msgq_get(..., K_MSEC(5000)))
+#
+# Five seconds is the whole design constraint. The ESP32 asks at the moment it
+# is about to act — right before it reboots into new firmware, or right before
+# it drops the STM32 into its bootloader — and if no verdict lands in time it
+# abandons the update outright.
+#
+# The PROMPT IS 5 s FOR EVERY TARGET, deliberately. A driver should not get a
+# window whose length depends on which ECU happens to be asking. Five seconds,
+# for everyone.
+#
+# What differs per target is deadline_ms: how long WE wait before giving up and
+# applying on_no_verdict. It has to sit above the prompt plus the latency around
+# it (notice the offer, drop the card in, poll for the verdict) and below the
+# requester's wall with room for the SecOC build and the frame itself.
+#
+# The cluster has 60 s to play with, so its deadline sits well past the prompt
+# and the driver's answer always decides. The ESP32 does not: its wall is 5000 ms
+# — the same length as the prompt — so there is nowhere to put a deadline that is
+# both above the prompt and below the wall. deadline_ms=4400 therefore expires
+# BEFORE the popup's own countdown, and an untouched ESP32 offer is resolved by
+# on_no_verdict rather than by the popup self-accepting. Accept and Deny inside
+# those 4.4 s are honoured exactly as they are everywhere else; only the tail of
+# the countdown is decoration on this one path. The alternative was a shorter
+# prompt for the ESP32, and a prompt whose length you cannot predict is one you
+# cannot learn to react to.
+#
+# ui_ms is a REQUEST, not a command: the head unit clamps it to its own maximum
+# and can refuse auto-accept entirely.
+Budget = namedtuple("Budget", "peer_wait_ms ui_ms deadline_ms")
+
+BUDGETS = {
+    "cluster": Budget(peer_wait_ms=60000, ui_ms=5000, deadline_ms=30000),
+    "esp32":   Budget(peer_wait_ms=5000,  ui_ms=5000, deadline_ms=4400),
+}
+
+# How often we look for a verdict once one is outstanding. At 4 s of ESP32
+# budget this is 1.6% of the window, which is noise; the timer only exists
+# while something is actually pending.
+APPROVAL_POLL_S = 0.1
+
+APPROVAL_DIR = "/run/ota-approval"
 
 
 class UpdateCoordinator(Node):
@@ -48,10 +114,37 @@ class UpdateCoordinator(Node):
         self.declare_parameter("state_dir", STATE_DIR)
         self.declare_parameter("timeout_sec", UPDATE_TIMEOUT_S)
 
+        # Human approval. require_approval=False restores the old behaviour of
+        # answering every REQUEST automatically, which is what bring-up on a
+        # bench with no head unit attached wants.
+        self.declare_parameter("require_approval", True)
+        self.declare_parameter("approval_dir", APPROVAL_DIR)
+        self.declare_parameter("ui_alive_max_age_s", 10.0)
+        self.declare_parameter("on_no_verdict", "approve")
+
         key_path  = self.get_parameter("secoc_key").value
         iface     = self.get_parameter("can_iface").value
         state_dir = self.get_parameter("state_dir").value
         self._timeout_sec = self.get_parameter("timeout_sec").value
+
+        self._require_approval = bool(self.get_parameter("require_approval").value)
+        approval_dir           = self.get_parameter("approval_dir").value
+        self._ui_max_age       = float(self.get_parameter("ui_alive_max_age_s").value)
+
+        # What to do when the head unit is up but never answers. "approve"
+        # matches ivi_ota_agent.sh's ON_NO_UI and the head unit's own
+        # auto-accept: across this whole handshake, "nobody is paying attention"
+        # consistently resolves to "go ahead" rather than to a car that cannot
+        # be updated. Set "deny" to invert it.
+        self._on_no_verdict = str(self.get_parameter("on_no_verdict").value).lower()
+        if self._on_no_verdict not in ("approve", "deny"):
+            self.get_logger().warn(
+                f"on_no_verdict='{self._on_no_verdict}' is not approve|deny — using approve")
+            self._on_no_verdict = "approve"
+
+        self._offers_dir   = os.path.join(approval_dir, "offers")
+        self._verdicts_dir = os.path.join(approval_dir, "verdicts")
+        self._alive_path   = os.path.join(approval_dir, "ui-alive")
 
         self._key = load_key(key_path)
         self._store = FvStore(state_dir)
@@ -77,13 +170,40 @@ class UpdateCoordinator(Node):
 
         self._timeout_timer = None
 
+        # name -> pending approval. At most one per requester.
+        self._pending = {}
+        self._poll_timer = None
+        self._offer_seq = 0
+
         self._recover_self_update()
+        self._sweep_stale_offers()
 
         self.get_logger().info(
             f"Coordinator ready on {iface} | "
             f"cluster=0x{CAN_ID_OTA_REQ:03X}->0x{CAN_ID_OTA_APPROVE:03X} "
             f"ecu=0x{CAN_ID_ECU_OTA_REQ:03X}->0x{CAN_ID_ECU_OTA_APPROVE:03X}"
         )
+        if self._require_approval:
+            self.get_logger().info(
+                f"Driver approval REQUIRED via {approval_dir} "
+                f"(no verdict -> {self._on_no_verdict})"
+            )
+            if not os.path.isdir(self._verdicts_dir):
+                # Worth shouting about: the failure is invisible otherwise. No
+                # spool means no prompt can ever be answered, we fall straight
+                # through to on_no_verdict, and with the default that looks
+                # exactly like the old auto-approving coordinator.
+                self.get_logger().error(
+                    f"{self._verdicts_dir} does NOT exist — nothing can answer a "
+                    f"prompt, so every request will resolve to "
+                    f"'{self._on_no_verdict}'. Is ivi-ota-agent (which ships the "
+                    f"tmpfiles fragment) installed in this image?"
+                )
+        else:
+            self.get_logger().warn(
+                "require_approval=False — every OTA request is approved "
+                "automatically, with no driver prompt"
+            )
 
     def _can_loop(self):
         while not self._shutdown_event.is_set() and rclpy.ok():
@@ -140,13 +260,7 @@ class UpdateCoordinator(Node):
         slot = payload[1]
 
         if what == "REQUEST":
-            frame, fv = secoc_build(self._key, self._store, did_appr,
-                                    bytes([VERDICT_APPROVE, slot]))
-            can_send(self.can_sock, appr_can_id, frame)
-            self.active_ecus[name] = time.time()
-            self.get_logger().info(
-                f"{name} REQUEST slot={slot} -> APPROVE on 0x{appr_can_id:03X} (fv={fv})"
-            )
+            self._begin_approval(name, slot, did_appr, appr_can_id)
         else:
             if name in self.active_ecus:
                 del self.active_ecus[name]
@@ -155,6 +269,196 @@ class UpdateCoordinator(Node):
             self.get_logger().info(f"{name} RUNNING on slot={slot} — update complete")
 
         self._update_lock_state()
+
+    # ---------------------------------------------------------------- approval
+
+    def _ui_available(self):
+        """True if a head unit is up and able to answer a prompt.
+
+        Stale liveness means the app crashed, was never started, or the image
+        does not ship the spool. In every one of those cases nobody can press
+        anything, so asking would only burn the requester's timeout before we
+        fell back to the default anyway — and on the ESP32's 5 s path that
+        difference decides whether the update happens at all.
+        """
+        if not os.path.isdir(self._offers_dir):
+            return False
+        try:
+            age = time.time() - os.path.getmtime(self._alive_path)
+        except OSError:
+            return False
+        return age <= self._ui_max_age
+
+    def _write_offer(self, oid, target, slot, budget):
+        payload = {
+            "id":             oid,
+            "target":         target,
+            "version":        "",
+            "slot":           chr(slot) if 32 <= slot < 127 else str(slot),
+            "requested_at":   int(time.time()),
+            "expires_at":     int(time.time() + budget.deadline_ms / 1000.0),
+            "auto_accept_ms": budget.ui_ms,
+            "stops_vehicle":  True,
+        }
+        final = os.path.join(self._offers_dir, oid + ".json")
+        tmp   = final + ".tmp"
+        try:
+            with open(tmp, "w") as f:
+                f.write(json.dumps(payload))
+                f.flush()
+                os.fsync(f.fileno())
+            # Rename, never write in place. inotify fires on the first byte, and
+            # a head unit that reads a half-written offer logs it as malformed
+            # and ignores it — which on the ESP32 path costs the whole budget.
+            os.replace(tmp, final)
+            return True
+        except OSError as e:
+            self.get_logger().error(f"cannot write offer {oid}: {e}")
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return False
+
+    def _withdraw_offer(self, oid):
+        for path in (os.path.join(self._offers_dir, oid + ".json"),
+                     os.path.join(self._verdicts_dir, oid)):
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+
+    def _read_verdict(self, oid):
+        """True/False once the head unit answers, None while it has not."""
+        try:
+            with open(os.path.join(self._verdicts_dir, oid)) as f:
+                word = f.read(32).strip().lower()
+        except OSError:
+            return None
+        if word == "approve":
+            return True
+        if word == "deny":
+            return False
+        # Absence means nobody is home and we fail open; garbage means something
+        # answered and got it wrong, which is not the same thing and must not be
+        # read as consent.
+        self.get_logger().error(
+            f"verdict for {oid} was '{word}', not approve|deny — treating as DENY")
+        return False
+
+    def _sweep_stale_offers(self):
+        """Drop offers left behind by a previous run of this node.
+
+        Our own offers are meaningless once we restart: the requester has long
+        since timed out, and the CAN socket that would carry the verdict is a
+        different socket now. Leaving them would put a prompt on the driver's
+        screen for a question nobody is waiting on the answer to.
+        """
+        try:
+            names = os.listdir(self._offers_dir)
+        except OSError:
+            return
+        for fn in names:
+            if not fn.endswith(".json"):
+                continue
+            oid = fn[:-len(".json")]
+            if oid.split("-", 1)[0] in BUDGETS:
+                self._withdraw_offer(oid)
+                self.get_logger().info(f"cleared stale offer {oid} from a previous run")
+
+    def _begin_approval(self, name, slot, did_appr, appr_can_id):
+        budget = BUDGETS[name]
+
+        if not self._require_approval or not self._ui_available():
+            why = ("gate disabled" if not self._require_approval
+                   else "no head unit — failing open")
+            self._send_verdict(name, did_appr, appr_can_id, slot, True, why)
+            self.active_ecus[name] = time.time()
+            return
+
+        # A second REQUEST means the first one is dead — neither requester asks
+        # twice while it is still waiting. Take the old prompt down rather than
+        # leave the driver two cards for the same update.
+        if name in self._pending:
+            old = self._pending.pop(name)
+            self._withdraw_offer(old["id"])
+            self.get_logger().warn(
+                f"{name} re-requested while {old['id']} was pending — dropped it")
+
+        self._offer_seq += 1
+        oid = f"{name}-{int(time.time())}-{self._offer_seq}"
+
+        if not self._write_offer(oid, name, slot, budget):
+            self._send_verdict(name, did_appr, appr_can_id, slot, True,
+                               "offer could not be written — failing open")
+            self.active_ecus[name] = time.time()
+            return
+
+        self._pending[name] = {
+            "id":          oid,
+            "slot":        slot,
+            "did_appr":    did_appr,
+            "appr_can_id": appr_can_id,
+            "t0":          time.time(),
+            "deadline":    time.time() + budget.deadline_ms / 1000.0,
+        }
+        self._start_poll_timer()
+        self.get_logger().info(
+            f"{name} REQUEST slot={slot} -> asking the driver ({oid}, "
+            f"prompt {budget.ui_ms} ms, giving up at {budget.deadline_ms} ms, "
+            f"requester waits {budget.peer_wait_ms} ms)"
+        )
+
+    def _send_verdict(self, name, did_appr, appr_can_id, slot, approved, why):
+        verdict = VERDICT_APPROVE if approved else VERDICT_DENY
+        frame, fv = secoc_build(self._key, self._store, did_appr,
+                                bytes([verdict, slot]))
+        can_send(self.can_sock, appr_can_id, frame)
+        self.get_logger().info(
+            f"{name} slot={slot} -> {'APPROVE' if approved else 'DENY'} "
+            f"on 0x{appr_can_id:03X} ({why}, fv={fv})"
+        )
+
+    def _resolve(self, name, approved, why):
+        p = self._pending.pop(name, None)
+        if p is None:
+            return
+        self._withdraw_offer(p["id"])
+        elapsed_ms = int((time.time() - p["t0"]) * 1000)
+        self._send_verdict(name, p["did_appr"], p["appr_can_id"], p["slot"],
+                           approved, f"{why} after {elapsed_ms} ms")
+
+        # Only an approval holds the vehicle. A deny means the update is not
+        # happening, so there is nothing to stand still for and the driver keeps
+        # driving — which is the entire point of offering them the choice.
+        if approved:
+            self.active_ecus[name] = time.time()
+
+        self._update_lock_state()
+
+    def _start_poll_timer(self):
+        if self._poll_timer is None:
+            self._poll_timer = self.create_timer(APPROVAL_POLL_S, self._poll_approvals)
+
+    def _stop_poll_timer(self):
+        if self._poll_timer is not None:
+            self.destroy_timer(self._poll_timer)
+            self._poll_timer = None
+
+    def _poll_approvals(self):
+        now = time.time()
+        for name in list(self._pending):
+            p = self._pending[name]
+            answer = self._read_verdict(p["id"])
+            if answer is not None:
+                self._resolve(name, answer,
+                              "driver " + ("APPROVED" if answer else "DENIED"))
+            elif now >= p["deadline"]:
+                self._resolve(name, self._on_no_verdict == "approve",
+                              f"no answer, on_no_verdict={self._on_no_verdict},")
+
+        if not self._pending:
+            self._stop_poll_timer()
 
     def _start_timeout_timer(self):
         if self._timeout_timer is None:
@@ -250,6 +554,13 @@ class UpdateCoordinator(Node):
 
     def destroy_node(self):
         self.get_logger().info("Shutting down coordinator...")
+        # Take our prompts down on the way out. We are about to stop listening,
+        # so an answer would land nowhere — but the card would stay on the
+        # driver's screen looking like it still means something.
+        for name, p in list(self._pending.items()):
+            self._withdraw_offer(p["id"])
+            self.get_logger().warn(f"withdrew pending offer {p['id']} ({name}) — shutting down")
+        self._pending.clear()
         self._shutdown_event.set()
         if self.can_sock:
             self.can_sock.close()
