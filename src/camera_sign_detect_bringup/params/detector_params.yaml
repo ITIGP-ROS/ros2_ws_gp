@@ -2,9 +2,18 @@ yolos_detector:
   ros__parameters:
     model_path: "" # overritten by the launch file (instead of using absolute path)
     labels_path: "" # overritten by the launch file
-    conf_threshold: 0.4
+    conf_threshold: 0.7
     nms_threshold: 0.45
     publish_debug_image: false
     publish_timing: false
-    ## the Topics to subscribe and publish are not params 
+
+    # Inference rate limit in Hz; 0 disables throttling (previous behaviour).
+    # The camera runs at 5 fps (its hardware floor) and this drops 3 of every 5 frames
+    # before the cv_bridge colour conversion, so dropped frames cost almost nothing.
+    # A 5 Hz source cannot divide evenly into 2 Hz, so the node holds a 2 Hz *average*
+    # with gaps alternating 0.4 s / 0.6 s (simulated 1.99 Hz). If uniform spacing ever
+    # matters, set the camera to 10 fps instead -- that divides exactly.
+    max_inference_rate: 2.0
+
+    ## the Topics to subscribe and publish are not params
     ## so can only be remapped in the launch file

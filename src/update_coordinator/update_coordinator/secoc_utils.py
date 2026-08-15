@@ -89,9 +89,30 @@ def secoc_verify(key, store, did, frame):
     return frame[0:2], cand
 
 
-def can_open(iface):
+def can_open(iface, can_ids=None):
+    """Open a raw CAN socket, optionally filtered to `can_ids` in the kernel.
+
+    Without a filter the socket receives every frame on the bus. On this vehicle
+    that is ~400 frames/s (0x110, 0x130, 0x150, 0x160, 0x210 ...), and each one costs
+    a select() wake, a recv, a struct.unpack, a queue put and a guard-condition
+    trigger that wakes the whole ROS executor -- all so _handle_can() can early-return
+    on an ID it does not care about. That was roughly a third of a CPU core at idle,
+    more than the entire detection pipeline.
+
+    Passing the IDs actually handled lets the kernel drop the rest before they reach
+    Python, so the receive thread wakes only for real OTA traffic.
+    """
     s = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
     s.bind((iface,))
+
+    if can_ids:
+        # struct can_filter { canid_t can_id; canid_t can_mask; }
+        # A frame matches when (received_id & can_mask) == (can_id & can_mask).
+        filters = b"".join(
+            struct.pack("=II", can_id, CAN_SFF_MASK) for can_id in can_ids
+        )
+        s.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_FILTER, filters)
+
     return s
 
 

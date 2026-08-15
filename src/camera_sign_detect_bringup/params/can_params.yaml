@@ -2,5 +2,5 @@ yolo_class_can:
   ros__parameters:
     can_interface: "can0"
     detections_topic: "/yolos_detector/detections"
-    conf_threshold: 0.5
+    conf_threshold: 0.7
     can_id: 533

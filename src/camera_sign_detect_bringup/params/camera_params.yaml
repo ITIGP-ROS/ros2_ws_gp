@@ -1,7 +1,29 @@
 camera:
   ros__parameters:
-    video_device: "/dev/video0"
-    image_size: [640, 640]
+    # Stable name from the udev rule shipped by meta-vpace (99-vpace-camera.rules),
+    # matching the Brio's 046d:094c on V4L2 index 0. /dev/videoN is NOT stable here:
+    # it has been observed to move between video0/video1/video2 across replugs.
+    video_device: "/dev/camera-front"
+
+    # 640x640 is not a mode this camera advertises. V4L2 silently substitutes the
+    # nearest match (640x480) and the driver still logs "Success", so the old value
+    # looked like it worked while doing nothing.
+    image_size: [640, 480]
     pixel_format: "YUYV"
-    time_per_frame: [1, 10]
-    publish_image: true
+
+    # Publish the sensor's native YUYV untouched. With rgb8 the pipeline paid for two
+    # colour conversions per frame: yuy2->rgb8 here (logged as "possibly slow
+    # conversion"), then rgb8->bgr8 again in the detector's cv_bridge, which asks for
+    # BGR8. Passing YUYV straight through leaves exactly one conversion, and it only
+    # runs on frames that survive the detector's rate limit.
+    output_encoding: "yuv422_yuy2"
+
+    # 5 fps is the slowest interval this camera advertises (30/24/20/15/10/7.5/5);
+    # [1, 2] was never reachable in hardware. Requires the time_per_frame backport in
+    # meta-vpace -- stock v4l2_camera 0.6.2 has no such parameter and never calls
+    # VIDIOC_S_PARM, so without the patch this line is silently ignored.
+    # Verify after any driver change with: ros2 param dump /camera | grep time_per_frame
+    time_per_frame: [1, 5]
+
+    # NOTE: publish_image was removed -- it is not a real v4l2_camera parameter.
+    # Unknown keys here are kept as parameter overrides and discarded without warning.

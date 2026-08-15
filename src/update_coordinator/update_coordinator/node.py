@@ -150,7 +150,9 @@ class UpdateCoordinator(Node):
         self._store = FvStore(state_dir)
         self._self_update_flag = Path(state_dir) / "jetson_updating.flag"
 
-        self.can_sock = can_open(iface)
+        # Filter in the kernel to the only two IDs _handle_can() dispatches on.
+        # Everything else on the bus used to be woken up for and thrown away.
+        self.can_sock = can_open(iface, (CAN_ID_OTA_REQ, CAN_ID_ECU_OTA_REQ))
         self._shutdown_event = threading.Event()
         self.can_queue = queue.Queue()
         self._can_thread = threading.Thread(target=self._can_loop, daemon=True)
