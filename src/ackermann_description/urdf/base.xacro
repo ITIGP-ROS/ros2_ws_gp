@@ -30,7 +30,7 @@
   <xacro:property name="wheel_inertia_izz" value="${1.0/12.0 * wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"/>
 
   <xacro:property name="steering_velocity_max" value="1.0"/>
-  <xacro:property name="steering_max" value="0.2421"/>
+  <xacro:property name="steering_max" value="0.286"/>
 
   <xacro:property name="wheel_effort_max" value="0.206"/> <!-- load torque in nm -->
   <xacro:property name="wheel_velocity_max" value="15.38"/> <!-- 0.5 m/s with r=0.0325m -->

@@ -40,29 +40,8 @@ ackermann_controller:
     front_wheels_radius: 0.0325
     rear_wheels_radius: 0.0325
     front_steering: true
-    # 0.2421 = the OLD, pre-calibration value.
-    #
-    # 2026-08-16 the Tiva steering calibration was re-measured and flashed (car-like
-    # 42b6fed): the previous constants came from a CAD figure and the servo-horn pot
-    # rather than the road wheels, and were wrong by 2.31x left / 1.91x right. The
-    # firmware clamp is now 0.286 rad (R = 0.80 m), so this value UNDER-uses the
-    # vehicle: R = 0.95 m instead of 0.80 m.
-    #
-    # Safe, because a clamp SMALLER than the mechanical reality only costs capability
-    # -- it cannot make the vehicle over-steer. So it is deliberately left alone until
-    # the perception team's ground check passes (one circle at delta 0.15 rad,
-    # expected ~3.10 m diameter against 1.30 m before). They asked us not to bake it
-    # before that, and we have not.
-    #
-    # WHEN IT LANDS, THREE VALUES MOVE AS ONE CHANGE:
-    #     controllers.yaml max_steering_angle       0.2421 -> 0.286
-    #     nav2_amcl.yaml   minimum_turning_radius   1.00   -> 0.84
-    #     nav2_amcl.yaml   min_turning_r (MPPI)     1.00   -> 0.84
-    # 0.84 NOT 0.80 -- see the reasoning recorded in nav2_amcl.yaml. Do not raise the
-    # clamp past 0.286 either: above it the RIGHT side is completely unmeasured (every
-    # endpoint run was a left-hand circle) and the delivered angle starts moving with
-    # battery voltage (100.5% at 11.5 V vs 90.5% at 11.4 V for the same command).
-    max_steering_angle: 0.2421 # 13.87 deg = real LEFT mechanical limit (Tiva steering_control.c); conservative symmetric clamp for Nav2 consistency. Real travel is asymmetric L +0.2421 / R -0.3037.
+
+    max_steering_angle: 0.286 # 13.87 deg = real LEFT mechanical limit (Tiva steering_control.c); conservative symmetric clamp for Nav2 consistency. Real travel is asymmetric L +0.2421 / R -0.3037.
 
     # Controller params
     reference_timeout: 0.1

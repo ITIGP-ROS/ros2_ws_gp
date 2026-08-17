@@ -189,7 +189,7 @@ controller_server:
         # max_steering_angle -> 0.286. All three move as ONE change or not at all.
         # 0.84 NOT 0.80: L/tan(0.286) = 0.80 exactly, which puts commanded steering ON
         # the clamp with zero margin — the identical condition item 105 was raised to fix.
-        min_turning_r: 1.00
+        min_turning_r: 0.84
       
       # Critics
       critics: ["ConstraintCritic", "ObstaclesCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic", "VelocityDeadbandCritic"]
@@ -399,7 +399,7 @@ planner_server:
       #
       # 🔜 PENDING: becomes 0.84 with the post-calibration change — see the note at
       # min_turning_r above. Both values and controllers.yaml move together.
-      minimum_turning_radius: 1.00
+      minimum_turning_radius: 0.84
       reverse_penalty: 2.0 #1.0 = no cost
       change_penalty: 1.0
       non_straight_penalty: 2.0
