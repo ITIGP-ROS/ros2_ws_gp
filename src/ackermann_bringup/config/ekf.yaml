@@ -1,0 +1,53 @@
+ekf_filter_node:
+  ros__parameters:
+    frequency: 30.0
+    sensor_timeout: 0.2    # Increased from 0.1: tolerate serial latency spikes without stalling
+    two_d_mode: true
+    transform_time_offset: 0.0    # https://github.com/cra-ros-pkg/robot_localization/issues/798
+    predict_to_current_time: true # https://github.com/cra-ros-pkg/robot_localization/pull/819#discussion_r1244013130
+    transform_timeout: 0.2        # Increased from 0.1: tolerate TF latency from SLAM/AMCL
+    print_diagnostics: false
+    debug: false
+
+    map_frame: map
+    odom_frame: odom
+    base_link_frame: base_footprint # The IMU and encoders are measured relative to base_footprint
+    world_frame: odom               # We are operating purely in the odom frame
+
+    # ==================================
+    # SENSOR 1: WHEEL ODOMETRY
+    # ==================================
+    odom0: /ackermann_controller/odometry
+    
+    # Due to the lack of steering encoder
+    # Only enable Linear X Velocity
+    # Disable Yaw Velocity from odometry (let IMU handle all turns)
+    # Although a limitation, it has been reliable so far
+    odom0_config: [false, false, false,
+                   false, false, false,
+                   true,  false, false,
+                   false, false, false,
+                   false, false, false]
+                   
+    odom0_queue_size: 10
+    odom0_nodelay: true
+    odom0_differential: false
+    odom0_relative: false
+
+    # ==================================
+    # SENSOR 2: IMU
+    # ==================================
+    imu0: /imu_broadcaster/imu
+    
+    # Prioritise IMU for angular velocities (turning)
+    imu0_config: [false, false, false,
+                  false, false, false,      # Disable absolute Roll, Pitch, Yaw (since they are fake)
+                  false, false, false,
+                  false, false, true,       # Enable Yaw Velocity (turning priority)
+                  false, false, false]      # Disable Linear X/Y Accel to isolate turning
+                  
+    imu0_nodelay: true
+    imu0_differential: true
+    imu0_relative: false
+    imu0_queue_size: 10
+    imu0_remove_gravitational_acceleration: true

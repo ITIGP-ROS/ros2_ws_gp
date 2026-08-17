@@ -1,0 +1,69 @@
+<!--
+  DO NOT add SmoothPath: nav2's smoothers are NOT turning-radius aware and would
+  produce undrivable paths. Smac's own radius-aware smooth_path:true handles
+  smoothing. (item 89)
+
+  Verified against the installed nav2 1.1.20: grepping both
+  nav2_smoother/{simple,savitzky_golay}_smoother.hpp for
+  `curvature|turning|radius` returns ZERO matches. A Savitzky-Golay filter has no
+  kinematic model at all, so it will happily round a corner tighter than the
+  1.00 m minimum turning radius this vehicle can actually drive.
+
+  The absence of SmoothPath here is therefore DELIBERATE, not an oversight — the
+  smoother_server block in nav2_amcl.yaml is dead config by design. What smooths
+  the path today is the planner's own `smooth_path: true`, whose smoother IS
+  radius-aware (nav2_smac_planner/smoother.hpp takes min_turning_radius).
+
+  If path smoothing ever proves necessary beyond that, the turning-radius
+  constraint must be re-imposed some other way — no stock nav2 smoother_server
+  plugin will do it for you.
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <Sequence name="NavigateWithClear">
+      <!-- Proactively clear ghost obstacles before starting navigation -->
+      <ClearEntireCostmap name="ClearLocalCostmap-Start" service_name="local_costmap/clear_entirely_local_costmap"/>
+      <ClearEntireCostmap name="ClearGlobalCostmap-Start" service_name="global_costmap/clear_entirely_global_costmap"/>
+
+      <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+        
+        <PipelineSequence name="NavigateWithReplanning">
+          <RateController hz="1.0">
+            <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+              <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+              <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+            </RecoveryNode>
+          </RateController>
+          <RecoveryNode number_of_retries="1" name="FollowPath">
+            <FollowPath path="{path}" controller_id="FollowPath"/>
+            <Sequence name="FollowPathRecovery">
+              <BackUp backup_dist="0.25" backup_speed="0.15" time_allowance="5.0"/>
+              <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
+            </Sequence>
+          </RecoveryNode>
+        </PipelineSequence>
+      
+      <!-- If the pipeline fails, execute this Fallback -->
+      <ReactiveFallback name="RecoveryFallback">
+        <GoalUpdated/>
+        <RoundRobin name="RecoveryActions">
+          <Sequence name="ClearingActions">
+            <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </Sequence>
+          
+          <!-- Unstuck logic: try backing up first -->
+          <BackUp backup_dist="0.25" backup_speed="0.15" time_allowance="5.0"/>
+          
+          <Wait wait_duration="1.5"/>
+
+          <!-- If backing up failed (i.e. wall is behind), try driving forward -->
+          <DriveOnHeading dist_to_travel="0.25" speed="0.15" time_allowance="5.0"/>
+        </RoundRobin>
+      </ReactiveFallback>
+      
+      </RecoveryNode>
+    </Sequence>
+  </BehaviorTree>
+</root>
+

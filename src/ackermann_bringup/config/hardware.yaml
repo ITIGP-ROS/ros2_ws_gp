@@ -1,0 +1,8 @@
+# Hardware-specific parameters that can be easily modified
+# without changing launch files or URDF files
+
+# CAN Communication 
+can_interface: "can0" # CAN interface name (vcan0 for virtual CAN , can0 for physical CAN)
+
+# Encoder Configuration
+enc_counts_per_rev: 2464  # Encoder counts per wheel revolution (616 PPR × 4 quadrature)

@@ -1,0 +1,10 @@
+<library path="ackermann_hardware">
+  <class name="ackermann_hardware/AckermannHardwareSystem"
+         type="ackermann_hardware::AckermannHardwareSystem"
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      An ackermann robot ros2_control hardware interface.
+      Fetches IMU and Encoder data from an MCU.
+    </description>
+  </class>
+</library>

@@ -1,0 +1,28 @@
+# Priority order: teleop (150) > recovery (100) > navigation (10).
+# The operator can always override a running recovery (item 100).
+#
+# WHY THIS CHANGED: recovery used to sit at 150, above teleop's 100 — so during a
+# recovery, which by definition runs when navigation has ALREADY failed and is
+# exactly when a human most wants control, teleop input was ignored until the
+# behaviour finished or timed out. Higher number = higher priority in twist_mux.
+#
+# ⚠️ CAVEAT for whoever adds the joystick/teleop node (nothing publishes
+# cmd_vel_teleop today): it MUST publish only on real operator input, or behind a
+# deadman. A node that publishes continuously — including zero Twists when idle —
+# now sits at the TOP of the mux and would permanently lock out BOTH recovery and
+# navigation. The 0.5 s timeout only releases the lock once publishing STOPS.
+twist_mux:
+  ros__parameters:
+    topics:
+      navigation:
+        topic   : cmd_vel_nav_smoothed
+        timeout : 0.5
+        priority: 10
+      recovery:
+        topic   : cmd_vel_recovery
+        timeout : 0.5
+        priority: 100
+      teleop:
+        topic   : cmd_vel_teleop
+        timeout : 0.5
+        priority: 150

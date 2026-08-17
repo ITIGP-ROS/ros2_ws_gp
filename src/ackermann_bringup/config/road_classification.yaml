@@ -1,0 +1,7 @@
+road_classification_node:
+  ros__parameters:
+    can_interface: "can0"
+    confidence_threshold: 50
+    rough_speed_limit: 50.0
+    smooth_speed_limit: 0.0
+    publish_rate: 10.0

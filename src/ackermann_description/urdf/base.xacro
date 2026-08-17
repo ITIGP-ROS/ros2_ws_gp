@@ -1,0 +1,178 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="base">
+
+  <!-- Gazebo needs file:// paths, remote RViz needs package:// paths -->
+  <xacro:if value="$(arg hardware)">
+    <xacro:property name="mesh_prefix" value="package://ackermann_description"/>
+  </xacro:if>
+  <xacro:unless value="$(arg hardware)">
+    <xacro:property name="mesh_prefix" value="file://$(find ackermann_description)"/>
+  </xacro:unless>
+
+  <!-- ====== PARAMETERS ====== -->
+  <xacro:property name="track" value="0.18179"/>
+  <xacro:property name="front_pivot_track" value="0.12"/>
+  <xacro:property name="wheelbase" value="0.23529"/>
+  <xacro:property name="pivot_wheel_offset_y" value="0.0325"/> <!-- Offset of wheel from fixed steering pivot -->
+  <xacro:property name="wheel_offset_z" value="0.0131"/> <!-- Height of wheel above chasis -->
+
+  <xacro:property name="wheel_radius" value="0.0325"/>
+  <xacro:property name="wheel_width" value="0.026"/>
+  <xacro:property name="wheel_mass" value="0.031"/>
+  <xacro:property name="chassis_mass" value="0.328"/>
+  
+  <xacro:property name="chassis_inertia_ixx" value="0.03"/>
+  <xacro:property name="chassis_inertia_iyy" value="0.03"/>
+  <xacro:property name="chassis_inertia_izz" value="0.05"/>
+  
+  <xacro:property name="wheel_inertia_ixx" value="${1.0/12.0 * wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"/>
+  <xacro:property name="wheel_inertia_iyy" value="${0.5 * wheel_mass * wheel_radius * wheel_radius}"/>
+  <xacro:property name="wheel_inertia_izz" value="${1.0/12.0 * wheel_mass * (3*wheel_radius*wheel_radius + wheel_width*wheel_width)}"/>
+
+  <xacro:property name="steering_velocity_max" value="1.0"/>
+  <xacro:property name="steering_max" value="0.2421"/>
+
+  <xacro:property name="wheel_effort_max" value="0.206"/> <!-- load torque in nm -->
+  <xacro:property name="wheel_velocity_max" value="15.38"/> <!-- 0.5 m/s with r=0.0325m -->
+  
+  <!-- ====== MATERIALS ====== -->
+  <material name="black">
+    <color rgba="0.04 0.04 0.04 1.0"/>
+  </material>
+  <material name="grey">
+    <color rgba="0.2 0.2 0.2 1.0"/>
+  </material>
+  <material name="off_white">
+  <color rgba="0.75 0.75 0.75 1.0" />
+</material>
+
+  <!-- ==== BASE FOOTPRINT ====-->
+  <link name="base_footprint"/>
+
+  <joint name="base_joint" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="-0.13 0 ${(wheel_radius) - wheel_offset_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ====== BASE LINK ====== -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <mesh filename="${mesh_prefix}/meshes/chasis.stl"/>
+      </geometry>
+      <material name="off_white"/>
+      <origin xyz="0.13 0 0" rpy="1.570795 0 -1.570795"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.34 0.155 0.155"/>
+      </geometry>
+      <origin xyz="0.131 0 0.075"/>
+    </collision>
+    <inertial>
+      <mass value="${chassis_mass}"/>
+      <origin xyz="0.13 0 0"/>
+      <inertia ixx="${chassis_inertia_ixx}" ixy="0.0" ixz="0.0"
+               iyy="${chassis_inertia_iyy}" iyz="0.0" izz="${chassis_inertia_izz}"/>
+    </inertial>
+  </link>
+  <gazebo reference="base_link">
+<!--      <mu1>0.0001</mu1>
+      <mu2>0.0001</mu2>  -->
+  </gazebo>
+
+  <!-- ====== LINK MACRO ====== -->
+  <xacro:macro name="wheel_link" params="name rotation">
+    <link name="${name}">
+      <visual>
+        <geometry>
+          <mesh filename="${mesh_prefix}/meshes/wheel.stl"/>
+        </geometry>
+        <material name="black"/>
+        <origin xyz="0 0 0" rpy="0 0 ${rotation}"/>
+      </visual>
+      <collision>
+        <geometry>
+          <cylinder radius="${wheel_radius}" length="${wheel_width}"/>
+        </geometry>
+        <origin xyz="0 0 0" rpy="1.570795 0 0"/>
+      </collision>
+      <inertial>
+        <mass value="${wheel_mass}"/>
+        <inertia ixx="${wheel_inertia_ixx}" ixy="0.0" ixz="0.0"
+                 iyy="${wheel_inertia_iyy}" iyz="0.0" izz="${wheel_inertia_izz}"/>
+        <origin xyz="0 0 0" rpy="1.570795 0 0"/>
+      </inertial>
+    </link>
+    <gazebo reference="${name}">
+<!--      <mu1>0.5</mu1>
+      <mu2>0.5</mu2>
+      <kp>1000000</kp>
+      <kd>10</kd>
+      <minDepth>0.001</minDepth>  -->
+    </gazebo>
+  </xacro:macro>
+
+  <xacro:macro name="steering_link" params="name">
+    <link name="${name}">
+      <visual>
+        <geometry>
+          <box size="0.02 0.02 0.02"/>
+        </geometry>
+      </visual>
+      <inertial>
+        <mass value="0.001"/>
+        <inertia ixx="0.01" ixy="0.0" ixz="0.0"
+                 iyy="0.01" iyz="0.0" izz="0.01"/>
+      </inertial>
+    </link>
+    <gazebo reference="${name}">
+<!--      <mu1>0.5</mu1>
+      <mu2>0.5</mu2>
+      <kp>1000000</kp>
+      <kd>10</kd>
+      <minDepth>0.001</minDepth> -->
+    </gazebo>
+  </xacro:macro>
+
+  <!-- ====== JOINT MACRO ====== -->
+  <xacro:macro name="steering_joint" params="name parent child x y z">
+    <joint name="${name}" type="revolute">
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+      <parent link="${parent}"/>
+      <child link="${child}"/>
+      <axis xyz="0 0 1"/>
+      <limit effort="1.0" lower="-${steering_max}" upper="${steering_max}" velocity="${steering_velocity_max}"/>
+    </joint>
+  </xacro:macro>
+
+  <xacro:macro name="wheel_joint" params="name parent child x y z">
+    <joint name="${name}" type="continuous">
+      <origin xyz="${x} ${y} ${z}" rpy="0 0 0"/>
+      <parent link="${parent}"/>
+      <child link="${child}"/>
+      <axis xyz="0 1 0"/>
+      <limit effort="${wheel_effort_max}" velocity="${wheel_velocity_max}"/>
+    </joint>
+  </xacro:macro>
+
+  <!-- ====== LINKS & JOINTS ====== -->
+
+  <!-- Front steering -->
+  <xacro:steering_link name="front_left_steering_link"/>
+  <xacro:steering_link name="front_right_steering_link"/>
+  <xacro:steering_joint name="front_left_steering_joint" parent="base_link" child="front_left_steering_link" x="${wheelbase}" y="${front_pivot_track / 2}" z="${wheel_offset_z}"/>
+  <xacro:steering_joint name="front_right_steering_joint" parent="base_link" child="front_right_steering_link" x="${wheelbase}" y="-${front_pivot_track / 2}" z="${wheel_offset_z}"/>
+  <!-- Front wheels -->
+  <xacro:wheel_link name="front_left_wheel_link" rotation="-1.570795"/>
+  <xacro:wheel_link name="front_right_wheel_link" rotation="1.570795"/>
+  <xacro:wheel_joint name="front_left_wheel_joint" parent="front_left_steering_link" child="front_left_wheel_link" x="0" y="${pivot_wheel_offset_y}" z="0"/>
+  <xacro:wheel_joint name="front_right_wheel_joint" parent="front_right_steering_link" child="front_right_wheel_link" x="0" y="-${pivot_wheel_offset_y}" z="0"/>
+  <!-- Rear wheels -->
+  <xacro:wheel_link name="rear_left_wheel_link" rotation="-1.570795"/>
+  <xacro:wheel_link name="rear_right_wheel_link" rotation="1.570795"/>
+  <xacro:wheel_joint name="rear_left_wheel_joint" parent="base_link" child="rear_left_wheel_link" x="0" y="${track / 2}" z="${wheel_offset_z}"/>
+  <xacro:wheel_joint name="rear_right_wheel_joint" parent="base_link" child="rear_right_wheel_link" x="0" y="-${track / 2}" z="${wheel_offset_z}"/>
+
+</robot>

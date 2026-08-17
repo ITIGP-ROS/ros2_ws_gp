@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<robot xmlns:xacro="http://www.ros.org/wiki/xacro"  name="robot">
+
+    <xacro:arg name="hardware" default="false"/>
+    <xacro:arg name="can_interface" default="vcan0"/>
+    <xacro:arg name="enc_counts_per_rev" default="2464"/>
+
+    <xacro:include filename="base.xacro"/>
+    <xacro:include filename="sensors.xacro"/>
+    <xacro:include filename="control.xacro"/>
+
+</robot>
