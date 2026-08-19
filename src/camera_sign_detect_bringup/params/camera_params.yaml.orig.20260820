@@ -16,19 +16,6 @@ camera:
     # conversion"), then rgb8->bgr8 again in the detector's cv_bridge, which asks for
     # BGR8. Passing YUYV straight through leaves exactly one conversion, and it only
     # runs on frames that survive the detector's rate limit.
-    #
-    # DO NOT "fix" this to bgr8 to make recordings colour. It is deliberately the
-    # resting value, and collect.sh flips this node to bgr8 for the duration of a
-    # recording only (ros2 param set /camera output_encoding bgr8 -- applied without a
-    # stream restart, unlike time_per_frame). Making it permanent would put /image_raw
-    # back to 4.61 MB/s from 3.07 and move the colour conversion from 2/s to 5/s,
-    # partly undoing docs/camera-pipeline-optimization.md.
-    #
-    # It cannot simply be left at yuv422_yuy2 during recording either:
-    # compressed_image_transport encodes anything failing image_encodings::isColor()
-    # as mono8, SILENTLY -- a yuv422_yuy2 bag is GRAYSCALE with no error logged
-    # anywhere. Measured 2026-08-19: in yuv422_yuy2 -> out "jpeg compressed mono8",
-    # luma only (red 76, green 150, blue 29 = the BT.601 coefficients).
     output_encoding: "yuv422_yuy2"
 
     # 5 fps is the slowest interval this camera advertises (30/24/20/15/10/7.5/5);

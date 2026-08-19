@@ -11,3 +11,10 @@
 	path = src/ros2_yolos_cpp_trt
 	url = https://github.com/YouhanaBeshay/ros2_yolos_cpp_trt.git
 	branch = dev
+[submodule "src/CUDA-PointPillars-ROS2"]
+	path = src/CUDA-PointPillars-ROS2
+	url = https://github.com/Abdulrahman2200925/CUDA-PointPillars-ROS2.git
+[submodule "src/ros2-lidar-perception"]
+	path = src/ros2-lidar-perception
+	url = https://github.com/ITIGP-ROS/ros2-lidar-perception.git
+	branch = main
