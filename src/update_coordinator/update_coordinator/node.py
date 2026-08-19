@@ -60,17 +60,30 @@ STATE_DIR = "/var/lib/update_coordinator"
 #
 #   cluster  0x300  the QNX bridge waits 60 s   (mcp2515_can_udp.c,
 #                                                OTA_APPROVE_TIMEOUT_S)
-#   esp32    0x310  the ECU waits 5 s, once     (ECU/ESP32/src/logs/can.c,
-#                                                k_msgq_get(..., K_MSEC(5000)))
+#   esp32    0x310  the ECU waits 10 s, once    (ECU/ESP32/src/logs/can.c,
+#                                                k_msgq_get(..., K_MSEC(10000)))
 #
-# Five seconds is the whole design constraint. The ESP32 asks at the moment it
-# is about to act — right before it reboots into new firmware, or right before
-# it drops the STM32 into its bootloader — and if no verdict lands in time it
-# abandons the update outright.
+# The ESP32 asks at the moment it is about to act — right before it reboots into
+# new firmware, or right before it drops the STM32 into its bootloader — it asks
+# exactly ONCE, and if no verdict lands in time it abandons the update outright.
+# There is no retry to fall back on, which is what makes its wall the number
+# every other timeout here is sized against.
 #
-# The PROMPT IS 5 s FOR EVERY TARGET, deliberately. A driver should not get a
-# window whose length depends on which ECU happens to be asking. Five seconds,
+# That wall used to be 5000 ms and is now 10000 ms (the firmware's own printk
+# says "waiting up to 10s"). The whole reason deadline_ms below could be raised
+# to honour a 9 s prompt on this path is that extra five seconds. IF A BOARD IS
+# STILL RUNNING THE 5 s BUILD, deadline_ms=9500 lands its verdict long after
+# that board has given up and ESP32 updates will silently stop happening —
+# reflash it, or put deadline_ms back to 4400.
+#
+# The PROMPT IS 9 s FOR EVERY TARGET, deliberately. A driver should not get a
+# window whose length depends on which ECU happens to be asking. Nine seconds,
 # for everyone.
+#
+# ui_ms has to be raised HERE as well as on the head unit, not instead of it.
+# OtaManager clamps the window to min(what we ask for, its own ceiling), so an
+# offer still asking for 5000 ms would pin the prompt at five seconds however
+# high that ceiling went.
 #
 # What differs per target is deadline_ms: how long WE wait before giving up and
 # applying on_no_verdict. It has to sit above the prompt plus the latency around
@@ -78,28 +91,34 @@ STATE_DIR = "/var/lib/update_coordinator"
 # requester's wall with room for the SecOC build and the frame itself.
 #
 # The cluster has 60 s to play with, so its deadline sits well past the prompt
-# and the driver's answer always decides. The ESP32 does not: its wall is 5000 ms
-# — the same length as the prompt — so there is nowhere to put a deadline that is
-# both above the prompt and below the wall. deadline_ms=4400 therefore expires
-# BEFORE the popup's own countdown, and an untouched ESP32 offer is resolved by
-# on_no_verdict rather than by the popup self-accepting. Accept and Deny inside
-# those 4.4 s are honoured exactly as they are everywhere else; only the tail of
-# the countdown is decoration on this one path. The alternative was a shorter
-# prompt for the ESP32, and a prompt whose length you cannot predict is one you
-# cannot learn to react to.
+# and the driver's answer always decides. The ESP32 now has room too: 9000 ms of
+# prompt against a 10000 ms wall leaves a 1000 ms corridor, and deadline_ms=9500
+# sits in it — above the prompt, and ~500 ms below the wall for the SecOC build
+# and the frame itself. A self-accepting prompt puts its verdict in the spool at
+# ~9.0 s, we see it within one 100 ms poll, and the frame goes out around 9.15 s.
+#
+# So the driver's window is genuinely 9 s on EVERY target now. The 4400 ms
+# give-up that used to expire mid-countdown — resolving an untouched ESP32 offer
+# by on_no_verdict before the popup had finished — is gone, and with it the
+# caveat that the tail of the stripe decided nothing on that one path.
+#
+# deadline_ms still only governs the case where NOTHING answers: app crashed,
+# spool missing, prompt never resolved. Then we fall through to on_no_verdict at
+# 9.5 s, still inside the wall.
 #
 # ui_ms is a REQUEST, not a command: the head unit clamps it to its own maximum
 # and can refuse auto-accept entirely.
 Budget = namedtuple("Budget", "peer_wait_ms ui_ms deadline_ms")
 
 BUDGETS = {
-    "cluster": Budget(peer_wait_ms=60000, ui_ms=5000, deadline_ms=30000),
-    "esp32":   Budget(peer_wait_ms=5000,  ui_ms=5000, deadline_ms=4400),
+    "cluster": Budget(peer_wait_ms=60000, ui_ms=9000, deadline_ms=30000),
+    "esp32":   Budget(peer_wait_ms=10000, ui_ms=9000, deadline_ms=9500),
 }
 
-# How often we look for a verdict once one is outstanding. At 4 s of ESP32
-# budget this is 1.6% of the window, which is noise; the timer only exists
-# while something is actually pending.
+# How often we look for a verdict once one is outstanding. Against the ESP32's
+# ~500 ms of post-prompt slack this is the one number that must stay small: it
+# is the delay between the popup self-accepting and us noticing. The timer only
+# exists while something is actually pending.
 APPROVAL_POLL_S = 0.1
 
 APPROVAL_DIR = "/run/ota-approval"
