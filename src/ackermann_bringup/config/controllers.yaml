@@ -44,7 +44,18 @@ ackermann_controller:
     max_steering_angle: 0.286 # 13.87 deg = real LEFT mechanical limit (Tiva steering_control.c); conservative symmetric clamp for Nav2 consistency. Real travel is asymmetric L +0.2421 / R -0.3037.
 
     # Controller params
-    reference_timeout: 0.1
+    #
+    # 0.4s: was 0.1s. Measured live on teleop_twist_keyboard (2026-08-20,
+    # `ros2 topic hz /cmd_vel_teleop` while driving): gaps up to 0.215s between
+    # messages during continuous key-repeat -- bigger than the old 0.1s timeout,
+    # so the controller was zeroing the command almost every repeat cycle. That
+    # was the jitter/dropped-frames symptom. 0.4s gives ~2x margin over the
+    # measured 0.215s worst case. Kept below twist_mux's 0.5s per-source timeout
+    # (twist_mux_topics.yaml) on purpose: twist_mux never publishes a zero Twist
+    # on timeout, it just stops relaying, so this reference_timeout is the only
+    # actual deadman that halts the wheels when input stops -- it must stay
+    # faster than mux's own handoff decision.
+    reference_timeout: 0.4
     open_loop: false
     velocity_rolling_window_size: 10
     position_feedback: true
