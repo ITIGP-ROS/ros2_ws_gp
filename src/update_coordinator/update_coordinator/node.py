@@ -121,6 +121,15 @@ BUDGETS = {
 # exists while something is actually pending.
 APPROVAL_POLL_S = 0.1
 
+# How long a completion notice stays in the spool before we delete it.
+#
+# The head unit shows it for 5 s and scans at 1 Hz, so 30 s is generous. It has
+# to be deleted by US: notices/ is root-owned and the app runs as weston, so the
+# app can only remember which ones it has already shown — a leftover file would
+# toast again the next time the app restarted. The app's own staleness cut is
+# the backstop for a notice we crashed before expiring.
+NOTICE_TTL_S = 30.0
+
 APPROVAL_DIR = "/run/ota-approval"
 
 
@@ -163,6 +172,7 @@ class UpdateCoordinator(Node):
 
         self._offers_dir   = os.path.join(approval_dir, "offers")
         self._verdicts_dir = os.path.join(approval_dir, "verdicts")
+        self._notices_dir  = os.path.join(approval_dir, "notices")
         self._alive_path   = os.path.join(approval_dir, "ui-alive")
 
         self._key = load_key(key_path)
@@ -198,6 +208,7 @@ class UpdateCoordinator(Node):
 
         self._recover_self_update()
         self._sweep_stale_offers()
+        self._sweep_notices()
 
         self.get_logger().info(
             f"Coordinator ready on {iface} | "
@@ -288,6 +299,10 @@ class UpdateCoordinator(Node):
             else:
                 self.get_logger().warn(f"{name} sent RUNNING but was not active")
             self.get_logger().info(f"{name} RUNNING on slot={slot} — update complete")
+            # Tell the driver. RUNNING is the ECU confirming it has booted the
+            # new image, which is the only moment in this whole handshake where
+            # "the update worked" is actually known.
+            self._write_notice(name)
 
         self._update_lock_state()
 
@@ -340,6 +355,77 @@ class UpdateCoordinator(Node):
             except OSError:
                 pass
             return False
+
+    # ---------------------------------------------------------------- notices
+
+    def _write_notice(self, target):
+        """Announce a finished update to the head unit.
+
+        Same atomic write as an offer, and for the same reason: the app polls
+        this directory and inotify fires on the first byte, so a notice written
+        in place can be read half-formed.
+        """
+        if not os.path.isdir(self._notices_dir):
+            # Not an error worth shouting about on every update — the banner is
+            # cosmetic, unlike a verdict nobody can answer.
+            self.get_logger().debug(
+                f"{self._notices_dir} does not exist — no completion banner")
+            return
+
+        nid   = f"{target}-{int(time.time())}"
+        final = os.path.join(self._notices_dir, nid + ".json")
+        tmp   = final + ".tmp"
+        payload = {"id": nid, "target": target, "at": int(time.time())}
+        try:
+            with open(tmp, "w") as f:
+                f.write(json.dumps(payload))
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, final)
+        except OSError as e:
+            self.get_logger().warn(f"cannot write notice {nid}: {e}")
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            return
+
+        self.get_logger().info(f"{target} update complete -> notified the driver ({nid})")
+
+        # Expire it ourselves. The holder dance is because the callback has to
+        # cancel the very timer that is running it, and rclpy hands no handle in.
+        holder = {}
+
+        def _expire():
+            holder["t"].cancel()
+            self.destroy_timer(holder["t"])
+            try:
+                os.unlink(final)
+            except OSError:
+                pass
+
+        holder["t"] = self.create_timer(NOTICE_TTL_S, _expire)
+
+    def _sweep_notices(self):
+        """Drop notices a previous run of this node left behind.
+
+        Only ours die with us — the expiry timer above is gone after a restart,
+        and /run survives a service restart even though it does not survive a
+        reboot. Anything still here announced an update that finished before we
+        started, which is not news.
+        """
+        try:
+            names = os.listdir(self._notices_dir)
+        except OSError:
+            return
+        for fn in names:
+            if not fn.endswith(".json"):
+                continue
+            try:
+                os.unlink(os.path.join(self._notices_dir, fn))
+                self.get_logger().info(f"cleared stale notice {fn} from a previous run")
+            except OSError:
+                pass
 
     def _withdraw_offer(self, oid):
         for path in (os.path.join(self._offers_dir, oid + ".json"),
