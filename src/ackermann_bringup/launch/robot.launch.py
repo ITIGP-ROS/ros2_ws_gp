@@ -65,6 +65,13 @@ def generate_launch_description():
     emergency_stop_server = Node(
         package='ackermann_bringup',
         executable='emergency_stop_server',
+        parameters=[{
+            # Locking cancels the running nav2 goal. These re-send it shortly
+            # after the unlock so an OTA update does not silently throw away
+            # where the driver asked the car to go.
+            'restore_goal': True,
+            'goal_restore_delay_sec': 2.0,
+        }],
         output='screen'
     )
 

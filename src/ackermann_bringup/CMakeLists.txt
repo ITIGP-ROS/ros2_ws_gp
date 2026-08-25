@@ -28,6 +28,7 @@ ament_target_dependencies(emergency_stop_server
   rclcpp
   std_msgs
   std_srvs
+  geometry_msgs
   action_msgs
 )
 install(TARGETS emergency_stop_server
