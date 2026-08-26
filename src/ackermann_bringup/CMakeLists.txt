@@ -71,6 +71,19 @@ install(PROGRAMS
   # /imu_corrected and nothing else publishes that topic, so if this is not
   # installed the EKF has no yaw source at all. See the node's own docstring.
   src/imu_scale.py
+  # activate.py finishes the nav2 lifecycle transitions that lifecycle_manager
+  # abandons: at the 0.05 m global costmap the Smac planner spends ~14 s in
+  # configure(), which overruns a service timeout that is hardcoded in
+  # nav2_util (there is no parameter for it), so autostart logs "Failed to bring
+  # up all requested nodes. Aborting bringup." even though every node configured
+  # correctly. Without this, nav2 comes up half-activated with no bt_navigator
+  # and silently ignores every goal.
+  src/activate.py
+  # xbox_override.py is the ONLY publisher of /cmd_vel_teleop, twist_mux priority
+  # 150 -- the manual stop that does not depend on Nav2 behaving. It self-detects
+  # the pad axis map from (axes, buttons), which matters because the layout differs
+  # between USB and Bluetooth and a wrong LT axis drives the vehicle BACKWARDS.
+  src/xbox_override.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -79,6 +92,8 @@ install(CODE "
     ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/twist_stamper.py
     ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/camera_compressor.py
     ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/imu_scale.py
+    ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/activate.py
+    ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/xbox_override.py
   )
 ")
 

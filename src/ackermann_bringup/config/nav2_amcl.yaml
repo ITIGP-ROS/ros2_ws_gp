@@ -30,6 +30,46 @@ amcl:
     save_pose_rate: 0.5
     sigma_hit: 0.2
     tf_broadcast: true
+    # ⚠️ WITHOUT THIS, AN UNATTENDED NAV2 COMES UP HALF-DEAD -- and does not recover.
+    # AMCL publishes map->odom only once it has a pose. planner_server's global costmap
+    # (global_frame: map) blocks in Costmap2DROS::activate() on canTransform(map,
+    # base_link) in a `while (rclcpp::ok() && ...)` loop that NEVER times out, so
+    # lifecycle_manager's change_state call times out and it logs "Failed to bring up all
+    # requested nodes. Aborting bringup." -- leaving behavior_server, bt_navigator,
+    # waypoint_follower and velocity_smoother NEVER ACTIVATED. Setting the initial pose in
+    # RViz afterwards unblocks planner_server but does NOT bring those four back:
+    # lifecycle_manager has already given up, so goals go nowhere with no error.
+    #
+    # (0, 0, 0) IS THE POSE THE MAP WAS BUILT FROM. slam_toolbox originates the map frame
+    # at the vehicle's pose when mapping starts, so the origin is where the vehicle stood
+    # and yaw 0 is the heading it faced. Verified against the maps rather than assumed:
+    # map (0,0) lands on an OBSERVED-FREE cell in both home.pgm (pixel 273,103) and
+    # makerspace.pgm (pixel 85,582) -- it would be UNKNOWN or OCCUPIED if this convention
+    # did not hold. So if the vehicle is parked where mapping began, this is not a guess,
+    # it is correct, and the operator's correction is a refinement rather than a rescue.
+    #
+    # ⚠️ MARGIN IS THIN AT THE HOME ORIGIN: clearance there is 0.45 m against an
+    # inflation_radius of 0.40 -- only 0.05 m outside inflated-lethal space. It plans fine
+    # today. If inflation_radius is ever raised back toward the 0.45/0.60 the older
+    # comments in this file argue for, (0,0) lands INSIDE the inflated region and a goal
+    # sent before the operator re-localises fails with "Starting point in lethal space!".
+    # Move this pose if you move that radius. (makerspace has 0.90 m and is unaffected.)
+    #
+    # Being WRONG here is expected and safe by design: the operator sets the true pose
+    # (locate.py, or RViz) before driving, AMCL resets its filter, and nav2_bt.xml already
+    # clears BOTH costmaps at goal acceptance so obstacles marked while mislocalised are
+    # discarded. What this buys is a stack that is fully ACTIVE and ready to accept that
+    # correction, instead of one that is half-activated and cannot.
+    #
+    # NOT a substitute for locate.py. AMCL reports a tiny covariance while confidently
+    # wrong; only a scan-match score says the pose explains the LiDAR. Below 60%, do not
+    # drive.
+    set_initial_pose: true
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
     transform_tolerance: 0.3
     update_min_a: 0.10
     update_min_d: 0.15
