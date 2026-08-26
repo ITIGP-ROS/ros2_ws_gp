@@ -11,7 +11,12 @@ def generate_launch_description():
     
     use_sim_time = LaunchConfiguration('use_sim_time')
 
-    default_map = os.path.join(pkg_ackermann_bringup, 'maps', 'reception.yaml')
+    # Default changed 2026-08-23 from reception.yaml -- a pre-existing map of a
+    # different building. Launching without map:= silently loaded it, and RViz then
+    # showed a map that had nothing to do with the vehicle.
+    # /data/maps is used, not the package maps/ dir: /opt is on the A/B rootfs and a
+    # flash wipes it, while /data survives. Override with map:=<path> as before.
+    default_map = '/data/maps/home.yaml'
     default_nav2_params_file = os.path.join(pkg_ackermann_bringup, 'config', 'nav2_amcl.yaml')
 
     localization_launch = IncludeLaunchDescription(

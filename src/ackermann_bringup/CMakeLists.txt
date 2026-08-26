@@ -67,6 +67,10 @@ install(DIRECTORY config launch maps
 install(PROGRAMS
   src/twist_stamper.py
   src/camera_compressor.py
+  # imu_scale.py is NOT optional tooling. ekf.yaml fuses yaw-velocity from
+  # /imu_corrected and nothing else publishes that topic, so if this is not
+  # installed the EKF has no yaw source at all. See the node's own docstring.
+  src/imu_scale.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
@@ -74,6 +78,7 @@ install(CODE "
   execute_process(COMMAND chmod +x
     ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/twist_stamper.py
     ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/camera_compressor.py
+    ${CMAKE_INSTALL_PREFIX}/lib/${PROJECT_NAME}/imu_scale.py
   )
 ")
 

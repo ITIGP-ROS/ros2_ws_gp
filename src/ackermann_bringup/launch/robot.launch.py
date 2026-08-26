@@ -90,6 +90,19 @@ def generate_launch_description():
         output='screen'
     )
 
+    # THE EKF'S ONLY YAW SOURCE. ekf.yaml fuses yaw-velocity from /imu_corrected, and
+    # this node is the sole publisher of it: it scales the Tiva gyro's yaw rate by k and
+    # subtracts a measured bias. If it does not run, odometry heading freezes -- silently,
+    # because the EKF simply never receives an imu0 message. Spawned in the same
+    # OnProcessStart handler as imu_broadcaster below, so it comes up with its own input
+    # while the vehicle is still parked, which is what its bias window requires.
+    imu_scale_node = Node(
+        package='ackermann_bringup',
+        executable='imu_scale.py',
+        parameters=[{'use_sim_time': False}],
+        output='screen'
+    )
+
     controller_manager = Node(
         package='controller_manager',
         executable='ros2_control_node',
@@ -179,7 +192,8 @@ def generate_launch_description():
         RegisterEventHandler(
             event_handler=OnProcessStart(
                 target_action=controller_manager,
-                on_start=[ackermann_controller_spawner, imu_broadcaster_spawner, twist_stamper_node],
+                on_start=[ackermann_controller_spawner, imu_broadcaster_spawner,
+                          twist_stamper_node, imu_scale_node],
             )
         ),
     ])
