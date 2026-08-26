@@ -5,7 +5,7 @@
 
 [submodule "src/ros2_yolos_cpp"]
 	path = src/ros2_yolos_cpp
-	url = https://github.com/Geekgineer/ros2_yolos_cpp
+	url = https://github.com/Geekgineer/ros2_yolos_cpp.git
 	branch = main
 [submodule "src/ros2_yolos_cpp_trt"]
 	path = src/ros2_yolos_cpp_trt
@@ -18,3 +18,7 @@
 	path = src/ros2-lidar-perception
 	url = https://github.com/ITIGP-ROS/ros2-lidar-perception.git
 	branch = main
+[submodule "src/livox_ros_driver2"]
+	path = src/livox_ros_driver2
+	url = https://github.com/Livox-SDK/livox_ros_driver2.git
+	branch = master
