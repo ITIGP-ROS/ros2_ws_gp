@@ -150,7 +150,20 @@ def main():
                     help="evdev mode: /dev/input/eventN. Default: auto-detect a gamepad.")
     ap.add_argument("--device-checked", action="store_true",
                     help="confirms you ran joy_enumerate_devices ON THIS MACHINE (Step 0-J)")
-    args = ap.parse_args()
+    # ros2 launch appends "--ros-args ..." whenever the Node action carries a name,
+    # parameters or remappings, and this script parses with plain argparse -- which
+    # rejects them and exits 2 before a single frame is published. That is a SILENT loss
+    # of the manual override: joy_node still comes up, /joy still flows, the unit still
+    # reports active, and nothing holds twist_mux priority 150.
+    #
+    # Split at --ros-args rather than using parse_known_args(): the latter would also
+    # swallow a mistyped --max-fwd and fall back to the default speed cap without saying
+    # so, and a speed cap that silently reverts is not something this node should allow.
+    # sys.argv is left untouched, so rclpy still applies the remaps it finds there.
+    _argv = sys.argv[1:]
+    if "--ros-args" in _argv:
+        _argv = _argv[:_argv.index("--ros-args")]
+    args = ap.parse_args(_argv)
 
     # Same guard drive_segment.py carries. /cmd_vel and /cmd_vel_stamped BYPASS twist_mux and
     # the emergency lock -- odom_test.py and circle_test.py do exactly that and must not be
