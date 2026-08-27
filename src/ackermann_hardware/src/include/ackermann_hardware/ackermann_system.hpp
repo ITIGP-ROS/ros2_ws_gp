@@ -137,6 +137,24 @@ private:
   size_t can_write_failures_ = 0;
   static constexpr size_t CAN_WRITE_FAILURE_LIMIT = 5; // ~166 ms at 30 Hz
 
+  // CONGESTION is tracked separately, and tolerated for far longer.
+  //
+  // The socket is O_NONBLOCK, so a momentarily full kernel tx queue returns
+  // ENOBUFS/EAGAIN immediately. That is not a broken link and must not be counted
+  // against the 5-cycle bus-off limit: measured 2026-08-26 on a battery boot, a ~166 ms
+  // ENOBUFS burst tripped that limit, write() returned ERROR, ros2_control deactivated
+  // the hardware component, and the vehicle went silently uncommandable — all three
+  // controllers still reporting active — while can0 read ERROR-ACTIVE, berr-counter 0/0,
+  // bus-off 0. The link had never failed.
+  //
+  // 90 cycles ~= 3 s at 30 Hz. Long enough to ride out any queue burst plausible on this
+  // bus (five local writers, 331 rx frames/s), short enough that a genuinely wedged tx
+  // path still surfaces rather than letting Nav2 drive on commands that never leave the
+  // socket. Frames dropped during congestion are simply not sent — correct for a control
+  // channel, where a stale steering command is worse than a missing one.
+  size_t can_write_congestion_ = 0;
+  static constexpr size_t CAN_WRITE_CONGESTION_LIMIT = 90; // ~3 s at 30 Hz
+
   // Encoder-loss tracking (read side), gated on MEASURED TIME via enc_dt_accum_.
   // Tolerated for longer than the write side's 5 cycles because a transient encoder
   // drop is more plausible than a bus-off, while 333 ms is still far too short for

@@ -1,0 +1,131 @@
+<!--
+  DO NOT add SmoothPath: nav2's smoothers are NOT turning-radius aware and would
+  produce undrivable paths. Smac's own radius-aware smooth_path:true handles
+  smoothing. (item 89)
+
+  Verified against the installed nav2 1.1.20: grepping both
+  nav2_smoother/{simple,savitzky_golay}_smoother.hpp for
+  `curvature|turning|radius` returns ZERO matches. A Savitzky-Golay filter has no
+  kinematic model at all, so it will happily round a corner tighter than the
+  1.00 m minimum turning radius this vehicle can actually drive.
+
+  The absence of SmoothPath here is therefore DELIBERATE, not an oversight — the
+  smoother_server block in nav2_amcl.yaml is dead config by design. What smooths
+  the path today is the planner's own `smooth_path: true`, whose smoother IS
+  radius-aware (nav2_smac_planner/smoother.hpp takes min_turning_radius).
+
+  If path smoothing ever proves necessary beyond that, the turning-radius
+  constraint must be re-imposed some other way — no stock nav2 smoother_server
+  plugin will do it for you.
+-->
+<!--
+  ===========================================================================
+  REWRITTEN 2026-08-24 (CC_PROMPT_108). THE POLICY IS:
+      AVOID   plan around the obstacle and keep going
+      WAIT    only when no valid path exists at all, and STATIONARY
+      NEVER   clear the LOCAL costmap while blocked.
+      (A "NEVER reverse" rule was in force here from 2026-08-24 and was OVERTURNED
+       on 2026-08-25 — the premise was wrong, see item 2 below. A bounded reverse
+       now exists in the RoundRobin.)
+
+  WHAT WAS REMOVED AND WHY. All four were actively defeating the avoidance the
+  vehicle already does correctly:
+
+  1. ClearEntireCostmap(local) in the FollowPath recovery. THE root cause of the
+     infinite loop. It DELETED the person being avoided; the planner then routed
+     straight through where they stood; the LiDAR re-marked them; the progress
+     checker tripped; repeat. The recovery destroyed the evidence that avoidance
+     depends on.
+
+  2. BackUp, both occurrences (FollowPathRecovery and the RoundRobin). Measured
+     2026-08-24: /cmd_vel carried 0.150 m/s negative, exactly backup_speed, so
+     this was ALSO the reversing seen on 2026-08-23. behavior_server writes
+     cmd_vel DIRECTLY, so MPPI's vx_min 0.0 and the DUBIN planner do not
+     constrain it. Removing it is the only thing that does.
+     ⚠️ PARTLY REVERSED 2026-08-25. The stated reason — "NO REAR SENSING" — was
+     false: the Livox gives a full 360 deg scan with the rear sector 92.3% populated.
+     ONE bounded BackUp is back in the RoundRobin (0.30 m at 0.10 m/s); the
+     FollowPathRecovery occurrence stays removed. See the note at that node.
+
+  3. DriveOnHeading 0.25 m. It drove AT the person.
+
+  KEPT: Wait (stationary, forgets nothing) and the GLOBAL costmap clear. A stale
+  global ghost is a real failure mode, and clearing it does not erase the live
+  local obstacle.
+
+  BOUNDED: a Timeout decorator wraps the navigate subtree. Nav2 registers NO
+  wall-clock decorator (plugin_lib_names carries rate, distance, speed,
+  goal_updated, single_trigger and path_longer_on_approach only), so this is
+  BehaviorTree.CPP's OWN built in TimeoutNode: setRegistrationID("Timeout"),
+  port "msec", registered automatically by the factory. A permanently blocked goal
+  ABORTS instead of alternating forever.
+  ⚠️ msec is 60000 (60 s), NOT the 300000 this paragraph originally specified. It was
+  set to 300000 on 2026-08-24 to exceed the longest legitimate traverse of this map
+  (31 x 39 m, 50 m diagonal, about 250 s at 0.2 m/s) and cut to 60000 the same day.
+  60 s is therefore SHORTER than a full-diagonal traverse: a long leg can abort on
+  time rather than on failure. Raise it if you route across the whole map.
+
+  REPLAN RATE: raised 1.0 -> 5.0 Hz on 2026-08-24 (a person walks about 1.4 m/s, so
+  at 1 Hz they moved 1.4 m between replans, wider than the vehicle; 5 Hz matched the
+  local costmap's update_frequency), then RETURNED TO 1.0 Hz on 2026-08-26.
+  ⚠️ The RateController below is hz="1.0". Note this no longer matches the costmaps,
+  which both run at 5.0 in nav2_amcl.yaml — the moving-obstacle argument above still
+  stands and is simply not being acted on at present.
+  ===========================================================================
+-->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <Sequence name="NavigateWithClear">
+      <!-- Once, at goal acceptance, NOT while blocked. Removes stale ghosts from
+           a previous run before planning starts. -->
+      <ClearEntireCostmap name="ClearLocalCostmap-Start" service_name="local_costmap/clear_entirely_local_costmap"/>
+      <ClearEntireCostmap name="ClearGlobalCostmap-Start" service_name="global_costmap/clear_entirely_global_costmap"/>
+
+      <Timeout msec="120000">
+        <RecoveryNode number_of_retries="6" name="NavigateRecovery">
+
+          <PipelineSequence name="NavigateWithReplanning">
+            <RateController hz="1.0">
+              <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+                <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+                <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
+              </RecoveryNode>
+            </RateController>
+            <RecoveryNode number_of_retries="1" name="FollowPath">
+              <FollowPath path="{path}" controller_id="FollowPath"/>
+              <!-- WAIT, STATIONARY. Was BackUp plus ClearEntireCostmap(local).
+                   The vehicle holds position, keeps seeing the obstacle, and the
+                   next replan arcs around it. It does not reverse and it does not
+                   forget. -->
+              <Wait wait_duration="1.0" name="WaitBlocked"/>
+            </RecoveryNode>
+          </PipelineSequence>
+
+          <ReactiveFallback name="RecoveryFallback">
+            <GoalUpdated/>
+            <RoundRobin name="RecoveryActions">
+              <!-- BackUp RESTORED 2026-08-25, bounded. It was removed because the vehicle was
+                   believed to have NO REAR SENSING. That was later disproved: the Livox gives a
+                   full 360 degree scan and the rear sector is 92.3 percent populated, so a
+                   reverse is sensed, not blind. It was also removed under a never reverse
+                   policy that no longer applies now the planner is Reeds Shepp.
+                   WITHOUT this the tree has NO motion recovery at all: blocked by a person it
+                   could only clear the costmap (which instantly re marks the person from the
+                   live scan) and wait, forever. The operator saw the vehicle stop beside an
+                   obstacle and do nothing, because there was nothing it was allowed to do.
+                   Kept small on purpose: 0.30 m at 0.10 m/s. behavior_server writes cmd_vel
+                   DIRECTLY, so neither MPPI vx_min nor the planner constrains it. The gamepad
+                   remains the real stop at twist_mux priority 150. -->
+              <BackUp backup_dist="0.30" backup_speed="0.10" time_allowance="10" name="BackOffFromBlockage"/>
+              <!-- GLOBAL only. Clearing the LOCAL costmap here is what deleted the
+                   obstacle and caused the loop. -->
+              <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+              <Wait wait_duration="2.0" name="WaitRecovery"/>
+            </RoundRobin>
+          </ReactiveFallback>
+
+        </RecoveryNode>
+      </Timeout>
+    </Sequence>
+  </BehaviorTree>
+</root>

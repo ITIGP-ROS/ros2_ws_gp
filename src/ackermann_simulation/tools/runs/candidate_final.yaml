@@ -1,0 +1,638 @@
+amcl:
+  ros__parameters:
+    use_sim_time: false
+    alpha1: 0.1   # Rotation noise from rotation (reduce over-spreading when spinning)
+    alpha2: 0.2   # Rotation noise from translation (keep moderate)
+    alpha3: 0.3   # Translation noise from translation (ackermann slips slightly)
+    alpha4: 0.3   # Translation noise from rotation (spread particles wider in turns)
+    alpha5: 0.1   # Only used by omnidirectional model
+    base_frame_id: "base_link"
+    beam_skip_distance: 0.5
+    beam_skip_error_threshold: 0.9
+    beam_skip_threshold: 0.3
+    do_beamskip: true
+    global_frame_id: "map"
+    lambda_short: 0.1
+    laser_likelihood_max_dist: 2.0
+    laser_max_range: 15.0
+    laser_min_range: 0.2
+    laser_model_type: "likelihood_field_prob"
+    max_beams: 120
+    max_particles: 2000
+    min_particles: 500
+    odom_frame_id: "odom"
+    pf_err: 0.05
+    pf_z: 0.99
+    recovery_alpha_fast: 0.0
+    recovery_alpha_slow: 0.0
+    resample_interval: 1
+    robot_model_type: "nav2_amcl::DifferentialMotionModel"
+    save_pose_rate: 0.5
+    sigma_hit: 0.2
+    tf_broadcast: true
+    # ⚠️ WITHOUT THIS, AN UNATTENDED NAV2 COMES UP HALF-DEAD -- and does not recover.
+    # AMCL publishes map->odom only once it has a pose. planner_server's global costmap
+    # (global_frame: map) blocks in Costmap2DROS::activate() on canTransform(map,
+    # base_link) in a `while (rclcpp::ok() && ...)` loop that NEVER times out, so
+    # lifecycle_manager's change_state call times out and it logs "Failed to bring up all
+    # requested nodes. Aborting bringup." -- leaving behavior_server, bt_navigator,
+    # waypoint_follower and velocity_smoother NEVER ACTIVATED. Setting the initial pose in
+    # RViz afterwards unblocks planner_server but does NOT bring those four back:
+    # lifecycle_manager has already given up, so goals go nowhere with no error.
+    #
+    # (0, 0, 0) IS THE POSE THE MAP WAS BUILT FROM. slam_toolbox originates the map frame
+    # at the vehicle's pose when mapping starts, so the origin is where the vehicle stood
+    # and yaw 0 is the heading it faced. Verified against the maps rather than assumed:
+    # map (0,0) lands on an OBSERVED-FREE cell in both home.pgm (pixel 273,103) and
+    # makerspace.pgm (pixel 85,582) -- it would be UNKNOWN or OCCUPIED if this convention
+    # did not hold. So if the vehicle is parked where mapping began, this is not a guess,
+    # it is correct, and the operator's correction is a refinement rather than a rescue.
+    #
+    # ⚠️ MARGIN IS THIN AT THE HOME ORIGIN: clearance there is 0.45 m against an
+    # inflation_radius of 0.40 -- only 0.05 m outside inflated-lethal space. It plans fine
+    # today. If inflation_radius is ever raised back toward the 0.45/0.60 the older
+    # comments in this file argue for, (0,0) lands INSIDE the inflated region and a goal
+    # sent before the operator re-localises fails with "Starting point in lethal space!".
+    # Move this pose if you move that radius. (makerspace has 0.90 m and is unaffected.)
+    #
+    # Being WRONG here is expected and safe by design: the operator sets the true pose
+    # (locate.py, or RViz) before driving, AMCL resets its filter, and nav2_bt.xml already
+    # clears BOTH costmaps at goal acceptance so obstacles marked while mislocalised are
+    # discarded. What this buys is a stack that is fully ACTIVE and ready to accept that
+    # correction, instead of one that is half-activated and cannot.
+    #
+    # NOT a substitute for locate.py. AMCL reports a tiny covariance while confidently
+    # wrong; only a scan-match score says the pose explains the LiDAR. Below 60%, do not
+    # drive.
+    set_initial_pose: true
+    initial_pose:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      yaw: 0.0
+    transform_tolerance: 0.3
+    update_min_a: 0.10
+    update_min_d: 0.15
+    z_hit: 0.65
+    z_max: 0.0
+    z_rand: 0.35
+    z_short: 0.0
+    scan_topic: scan
+
+bt_navigator:
+  ros__parameters:
+    use_sim_time: false
+    global_frame: map
+    robot_base_frame: base_link
+    odom_topic: /odom
+    bt_loop_duration: 100
+    default_server_timeout: 20
+    wait_for_service_timeout: 1000
+    # 'default_nav_through_poses_bt_xml' and 'default_nav_to_pose_bt_xml' are use defaults:
+    # nav2_bt_navigator/navigate_to_pose_w_replanning_and_recovery.xml
+    # nav2_bt_navigator/navigate_through_poses_w_replanning_and_recovery.xml
+    # They can be set here or via a RewrittenYaml remap from a parent launch file to Nav2.
+    default_nav_to_pose_bt_xml: "replace/with/path/to/bt.xml"
+    default_nav_through_poses_bt_xml: "replace/with/path/to/bt.xml"
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_smooth_path_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_assisted_teleop_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_drive_on_heading_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_globally_updated_goal_condition_bt_node
+      - nav2_is_path_valid_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_truncate_path_local_action_bt_node
+      - nav2_goal_updater_node_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+      - nav2_single_trigger_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_is_battery_low_condition_bt_node
+      - nav2_navigate_through_poses_action_bt_node
+      - nav2_navigate_to_pose_action_bt_node
+      - nav2_remove_passed_goals_action_bt_node
+      - nav2_planner_selector_bt_node
+      - nav2_controller_selector_bt_node
+      - nav2_goal_checker_selector_bt_node
+      - nav2_controller_cancel_bt_node
+      - nav2_path_longer_on_approach_bt_node
+      - nav2_wait_cancel_bt_node
+      - nav2_back_up_cancel_bt_node
+      - nav2_assisted_teleop_cancel_bt_node
+      - nav2_drive_on_heading_cancel_bt_node
+      - nav2_is_battery_charging_condition_bt_node
+
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    use_sim_time: false
+
+bt_navigator_navigate_to_pose_rclcpp_node:
+  ros__parameters:
+    use_sim_time: false
+
+controller_server:
+  ros__parameters:
+    use_sim_time: false
+    controller_frequency: 10.0
+    min_x_velocity_threshold: 0.001
+    min_y_velocity_threshold: 0.001
+    min_theta_velocity_threshold: 0.001
+    failure_tolerance: 0.5
+    progress_checker_plugin: "progress_checker"
+    goal_checker_plugins: ["general_goal_checker"]
+    controller_plugins: ["FollowPath"]
+
+    # Progress checker parameters
+    progress_checker:
+      plugin: "nav2_controller::SimpleProgressChecker"
+      required_movement_radius: 0.05
+      movement_time_allowance: 5.0
+    # Goal checker parameters
+    #precise_goal_checker:
+    #  plugin: "nav2_controller::SimpleGoalChecker"
+    #  xy_goal_tolerance: 0.25
+    #  yaw_goal_tolerance: 0.25
+    #  stateful: true
+    general_goal_checker:
+      stateful: true
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.5
+
+    FollowPath:
+      plugin: "nav2_mppi_controller::MPPIController"
+      time_steps: 20
+      model_dt: 0.1
+      batch_size: 2000
+      vx_std: 0.2
+      vy_std: 0.0
+      wz_std: 0.15
+      vx_max: 0.4
+      vx_min: -0.25
+      # = vx_max/min_radius = 0.4/1.00; radius widened from 0.96 to 1.00 for
+      # on-ground servo-load margin (item 92 / bench finding, item 105).
+      # WHY: MEASURED wheels-up 2026-08-08, at R=0.96 the commanded average steering
+      # sat at EXACTLY the +0.2421 clamp — zero margin. R=1.00 gives delta 0.2317,
+      # a 4.2% margin under the clamp.
+      wz_max: 0.33
+      ax_max: 0.4
+      ax_min: -0.4
+      az_max: 0.8
+      enforce_path_inversion: true
+      inversion_xy_tolerance: 0.2
+      inversion_yaw_tolerance: 0.4
+      iteration_count: 1
+      prune_distance: 1.7
+      transform_tolerance: 0.5
+      temperature: 0.3
+      gamma: 0.015
+      motion_model: "Ackermann"
+      visualize: true
+      AckermannConstraints:
+        # THE fix (item 92): 0.65 was UNDRIVABLE — applyConstraints rewrites
+        # wz = sign(wz)*|vx|/min_turning_r, so MPPI emitted a 0.65 m turn needing
+        # delta 0.3481 rad: 44% past the 0.2421 steering clamp and 15% past even the
+        # mechanical right limit 0.3037. Both clamp layers then saturated to 0.955 m,
+        # so the car ran wide while MPPI mispredicted its own pose.
+        # Matches the planner's minimum_turning_radius exactly — one reference radius
+        # for the whole file (turning-radius consistency, item 92).
+        # WIDENED 0.96 -> 1.00 (2026-08-08) for on-ground servo-load margin: the bench
+        # showed R=0.96 put the commanded average steering at EXACTLY the 0.2421 clamp.
+        # delta @ R=1.00 = atan(0.2359/1.00) = 0.2317 rad, 4.2% inside the clamp.
+        # ⚠️ Still ABOVE the servo's measured ~0.222 rad PWM-saturation onset (item 105);
+        # a radius fully clear of that is ~1.05, deliberately NOT taken here — see item 106.
+        #
+        # 🔜 PENDING: the Tiva steering calibration was re-measured and flashed 2026-08-16
+        # (car-like 42b6fed). The old figures were wrong by 2.31x left / 1.91x right, and
+        # the new firmware clamp is 0.286 rad. Once the perception team's ground check
+        # passes (one circle at delta 0.15 rad, expected ~3.10 m diameter) this becomes
+        # 0.84 — together with minimum_turning_radius below and controllers.yaml
+        # max_steering_angle -> 0.286. All three move as ONE change or not at all.
+        # 0.84 NOT 0.80: L/tan(0.286) = 0.80 exactly, which puts commanded steering ON
+        # the clamp with zero margin — the identical condition item 105 was raised to fix.
+        #
+        # 🔴 RAISED 0.84 -> 0.96 on 2026-08-24, THEN 0.96 -> 1.20 ON 2026-08-25 (smoothfix.py;
+        # see the note after this one). THE VEHICLE IS ASYMMETRIC and 0.84 is only
+        # achievable turning RIGHT. The real mechanical stops, CAD-confirmed and enforced by
+        # ackermann_system.cpp's write() clamp, are LEFT 0.2421 rad and RIGHT 0.3037 rad:
+        #     LEFT   L/tan(0.2421) = 0.953 m      <-- the binding limit
+        #     RIGHT  L/tan(0.3037) = 0.751 m
+        # A single symmetric radius must therefore be the WORSE side. At 0.84 every LEFT
+        # corner was planned tighter than the vehicle can execute: the wheels ran wide, MPPI
+        # saw the tracking error and commanded harder, and the write() clamp refused — a
+        # controller fighting an actuator, in one direction only. Measured on the wire
+        # 2026-08-22 (MEMORY 5.1a): commanding 0.286 delivered +0.2421 LEFT, -0.2874 RIGHT.
+        #
+        # ⚠️ Do NOT "fix" this by raising the write() clamp instead. 0.2421 is a MECHANICAL
+        # STOP, not a software guess; commanding past it drives the servo into the linkage.
+        #
+        # 🔴 0.96 -> 1.20 on 2026-08-25 (smoothfix.py). MEASURED on ground bag
+        # 20260825_202942 over 192 plans: the vehicle TRACKS well (cross-track median
+        # 0.033 m), but on essentially straight routes the path REVERSES CURVATURE 0.46
+        # times per metre, every turning step being a 0.072 m chord at 5 deg = a 0.825 m
+        # radius -- 99.3% of the mechanical steering limit (p95 commanded 0.2404 rad vs
+        # the 0.2421 stop). A straight route was drawn as alternating near-full-lock arcs
+        # and driven faithfully.
+        # Per the Smac README, raising this yields paths that are smoother directly out of
+        # the planner without explicit smoothing. It also repairs the radius deficit the
+        # SMOOTHER creates: Humble's is curvature-BLIND and shortens each chord ~14% while
+        # keeping the turn angle, so 1.20 lands at ~1.03 m actual -- ABOVE the vehicle's
+        # true 0.953 m limit instead of 13% inside it.
+        # Verified before applying: at the 0.05 m grid, 1.20 still gives ONE angle
+        # increment, so primitives stay 5 deg and nothing gets coarser.
+        # ⚠️ wz_max is DERIVED from this: vx_max / min_turning_r = 0.4 / 1.20 = 0.333.
+        # velocity_smoother's third element must follow, or it passes rates MPPI no
+        # longer intends to produce.
+        min_turning_r: 1.20
+      # Critics
+      critics: ["ConstraintCritic", "ObstaclesCritic", "GoalCritic", "GoalAngleCritic", "PathAlignCritic", "PathFollowCritic", "PathAngleCritic", "PreferForwardCritic", "VelocityDeadbandCritic"]
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+      ObstaclesCritic:
+        enabled: true
+        cost_power: 1
+        repulsion_weight: 1.5
+        critical_weight: 20.0
+        # These two are NOT a second opinion — they are this critic's MODEL of the
+        # costmap, used by distanceToObstacle() to invert cost back into distance.
+        # They MUST stay byte-identical to BOTH costmaps' inflation_layer (item 94).
+        cost_scaling_factor: 5.0
+        # NOW 0.40, and the DECAY RATE is what was actually fixed (fixcfg.py, 2026-08-25).
+        # 0.60 was tried that morning on the "wider standoff" argument and reverted the
+        # same day; the file went 0.45 -> 0.60 -> 0.45 -> 0.40. Do not reinstate 0.60 on
+        # the strength of the old note -- it was measured and dropped.
+        # 0.40 still covers the footprint: the circumscribed radius is 0.338 m.
+        # cost_scaling_factor 3.0 -> 5.0 matters MORE than the radius here. At 3.0 the
+        # cost was still 127 at the circumscribed radius and 91 at the very edge of
+        # inflation -- a thick wall of cost the planner had to thread rather than a
+        # gradient it could descend.
+        # MUST stay equal in all THREE places: local costmap, global costmap and
+        # MPPI ObstaclesCritic. MPPI uses its copy to reproduce the costmap decay
+        # analytically; if they disagree it steers by a curve the costmap does not
+        # have.
+        inflation_radius: 0.40
+        # MUST be true for a non-circular robot: unset, the 1.1.20 default is not
+        # determinable from the installed files, and if it resolves false MPPI
+        # collision-checks this 0.38 x 0.22 m body as its INSCRIBED CIRCLE of radius
+        # 0.06 m (the rear edge) — 5.6x smaller than circumscribed (item 94).
+        consider_footprint: false
+        cost_weight: 4.0
+        collision_cost: 10000.0
+        collision_margin_distance: 0.10
+        near_goal_distance: 0.25
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 1.5
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.0
+        threshold_to_consider: 0.8
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 6.0
+        max_path_occupancy_ratio: 0.15
+        trajectory_point_step: 4
+        threshold_to_consider: 0.5
+        offset_from_furthest: 4
+        use_path_orientations: true
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 7.0
+        offset_from_furthest: 3
+        threshold_to_consider: 0.2
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 2.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.5
+        max_angle_to_furthest: 0.75
+        # Humble 1.1.20 has NO "mode" param; the binary reads forward_preference.
+        # "mode: 2" here was silently ignored, so this value was already in force.
+        # A/B measured on the bench 2026-08-25, wheels up, identical synthetic paths:
+        #   true : reverse leg 49 rev / 1 fwd | forward path 50 fwd / 0 rev
+        #   false: reverse leg 50 rev / 0 fwd | forward path 50 fwd / 0 rev
+        # Both execute a planned reverse leg fine -- PathAngleCritic carries weight 2.0
+        # while PathAlign (10.0) and PathFollow (7.0) dominate, so it never gets to veto
+        # the path. false is the semantically correct choice for REEDS_SHEPP with
+        # enforce_path_inversion (direction comes from the pruned segment, not from a
+        # global preference) and measured no worse anywhere. The forward bias that
+        # actually matters lives in PreferForwardCritic.
+        forward_preference: false
+      PreferForwardCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 0.5
+      VelocityDeadbandCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 10.0
+        deadband_velocities: [0.03, 0.0, 0.0]
+
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      update_frequency: 5.0
+      publish_frequency: 5.0
+      global_frame: odom
+      robot_base_frame: base_link
+      use_sim_time: false
+      rolling_window: true
+        # 4 -> 8 m. The window reached only +/-2 m while obstacle_max_range is 3.5 m
+        # and raytrace_max_range is 4.0 m, so most of the sensor was discarded.
+        # Measured 2026-08-24: 179 returns within 3.5 m, ZERO inside the 4x4 window,
+        # costmap 0%% lethal. A person entered the map only at ~2 m, which at
+        # 0.2-0.4 m/s with a 0.96 m turning radius leaves no room to react.
+      width: 8
+      height: 8
+      resolution: 0.1
+      # Real footprint: +0.32 m front / -0.06 m rear, ±0.11 m half-width.
+      # robot_radius 0.16 left the front axle outside the footprint (item 39).
+      # Half-width ±0.10 -> ±0.11 (item 85): the wheels reach 0.104-0.106 m, so ±0.10
+      # sat ~4-5 mm INSIDE the real vehicle. Inscribed radius is unchanged at 0.06 m
+      # (the REAR edge binds, not the sides); circumscribed rises 0.33526 -> 0.33838,
+      # which is the threshold inflation_radius must clear.
+      footprint: "[[0.32, 0.11], [0.32, -0.11], [-0.06, -0.11], [-0.06, 0.11]]"
+      #robot_radius: 0.16
+      plugins: ["obstacle_layer", "inflation_layer"]
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        # cost_scaling_factor left at 3.0: inflation_radius only TRUNCATES the decay
+        # curve, it does not steepen it, so widening already shrinks the cost cliff at
+        # the boundary from 122.7 to 78.2. Re-shaping the decay is tuning, not this fix.
+        cost_scaling_factor: 5.0
+        # 0.30 -> 0.45 (item 94). nav2's own runtime check requires inflation >= half
+        # the largest cross-section = the circumscribed radius = 0.33838 m for the
+        # ±0.11 footprint; below it, MPPI forfeits the potential-field shortcut and
+        # does FULL footprint collision checking at ~400k trajectory-point evals/s.
+        # 0.45 clears it with ~0.11 m of buffer for odometry/localisation drift.
+        # MUST equal the global costmap AND MPPI ObstaclesCritic.
+        # NOW 0.40, and the DECAY RATE is what was actually fixed (fixcfg.py, 2026-08-25).
+        # 0.60 was tried that morning on the "wider standoff" argument and reverted the
+        # same day; the file went 0.45 -> 0.60 -> 0.45 -> 0.40. Do not reinstate 0.60 on
+        # the strength of the old note -- it was measured and dropped.
+        # 0.40 still covers the footprint: the circumscribed radius is 0.338 m.
+        # cost_scaling_factor 3.0 -> 5.0 matters MORE than the radius here. At 3.0 the
+        # cost was still 127 at the circumscribed radius and 91 at the very edge of
+        # inflation -- a thick wall of cost the planner had to thread rather than a
+        # gradient it could descend.
+        # MUST stay equal in all THREE places: local costmap, global costmap and
+        # MPPI ObstaclesCritic. MPPI uses its copy to reproduce the costmap decay
+        # analytically; if they disagree it steers by a curve the costmap does not
+        # have.
+        inflation_radius: 0.40
+      # THE 3D LAYER. pointcloud_to_laserscan flattens the Mid-360 into ONE slice and
+      # everything else is discarded. Measured on this vehicle: of the returns within 6 m,
+      # only 25.9% fall inside that slab. 68.9% sit above it, BUT 28% of all points are the
+      # CEILING at 2.0-2.1 m, so max_obstacle_height MUST stay below that or the ceiling
+      # becomes a solid obstacle everywhere and nothing is drivable. The genuinely useful
+      # band is 0.6-1.9 m: roughly 7750 points, about 40% of returns, which are table tops,
+      # shelf overhangs and torsos the 2D slab cannot see at all.
+      # LOCAL costmap only: the global one would pay the same cost over a far larger grid
+      # and that has not been measured.
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          raytrace_max_range: 4.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 3.5
+          obstacle_min_range: 0.0
+      always_send_full_costmap: false
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      # RAISED 1.0 -> 5.0 on 2026-08-24 (CC_PROMPT_108), in lockstep with the behaviour
+      # tree's RateController. A person walks about 1.4 m/s, so at 1 Hz they moved 1.4 m
+      # between global costmap updates and replans -- wider than the vehicle, so the plan
+      # was always avoiding where the person USED to be. 5.0 matches the local costmap's
+      # own update_frequency, so both layers now see the world at the same rate.
+      #
+      # Measured cost on this board with weston up: see MEMORY 4.9. Baseline before the
+      # change was 63.4% of ONE core across all nav2+sensor nodes at loadavg 0.96 on
+      # 6 cores, so the headroom was there -- but it was measured, not assumed.
+      update_frequency: 5.0
+      publish_frequency: 5.0
+      global_frame: map
+      robot_base_frame: base_link
+      use_sim_time: false
+      # Real footprint: +0.32 m front / -0.06 m rear, ±0.11 m half-width.
+      # robot_radius 0.16 left the front axle outside the footprint (item 39).
+      # Half-width ±0.10 -> ±0.11 (item 85): the wheels reach 0.104-0.106 m, so ±0.10
+      # sat ~4-5 mm INSIDE the real vehicle. Inscribed radius is unchanged at 0.06 m
+      # (the REAR edge binds, not the sides); circumscribed rises 0.33526 -> 0.33838,
+      # which is the threshold inflation_radius must clear.
+      footprint: "[[0.32, 0.11], [0.32, -0.11], [-0.06, -0.11], [-0.06, 0.11]]"
+      #robot_radius: 0.16
+      resolution: 0.05
+      track_unknown_space: true
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          raytrace_max_range: 4.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 3.5
+          obstacle_min_range: 0.0
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+      inflation_layer:
+        plugin: "nav2_costmap_2d::InflationLayer"
+        cost_scaling_factor: 5.0
+        # 0.30 -> 0.45 (item 94) — see the local_costmap inflation_layer for the full
+        # rationale. MUST equal the local costmap AND MPPI ObstaclesCritic.
+        # NOW 0.40, and the DECAY RATE is what was actually fixed (fixcfg.py, 2026-08-25).
+        # 0.60 was tried that morning on the "wider standoff" argument and reverted the
+        # same day; the file went 0.45 -> 0.60 -> 0.45 -> 0.40. Do not reinstate 0.60 on
+        # the strength of the old note -- it was measured and dropped.
+        # 0.40 still covers the footprint: the circumscribed radius is 0.338 m.
+        # cost_scaling_factor 3.0 -> 5.0 matters MORE than the radius here. At 3.0 the
+        # cost was still 127 at the circumscribed radius and 91 at the very edge of
+        # inflation -- a thick wall of cost the planner had to thread rather than a
+        # gradient it could descend.
+        # MUST stay equal in all THREE places: local costmap, global costmap and
+        # MPPI ObstaclesCritic. MPPI uses its copy to reproduce the costmap decay
+        # analytically; if they disagree it steers by a curve the costmap does not
+        # have.
+        inflation_radius: 0.40
+      always_send_full_costmap: false
+
+map_server:
+  ros__parameters:
+    use_sim_time: false
+    # Overridden in launch by the "map" launch configuration or provided default value.
+    # To use in yaml, remove the default "map" value in the tb3_simulation_launch.py file & provide full path to map below.
+    yaml_filename: ""
+
+map_saver:
+  ros__parameters:
+    use_sim_time: false
+    save_map_timeout: 5.0
+    free_thresh_default: 0.25
+    occupied_thresh_default: 0.65
+    map_subscribe_transient_local: true
+
+planner_server:
+  ros__parameters:
+    expected_planner_frequency: 1.0
+    use_sim_time: false
+    planner_plugins: ["GridBased"]
+    GridBased:
+      plugin: "nav2_smac_planner/SmacPlannerHybrid"
+      downsample_costmap: false
+      downsampling_factor: 1
+      angle_quantization_bins: 72
+      analytic_expansion_ratio: 3.5
+      analytic_expansion_max_length: 5.0
+      # Mechanical limit is R = wheelbase(0.2359)/tan(0.2421) = 0.955 m. Was 0.80
+      # (optimistic — tighter than mechanically achievable), then 0.96 (rounded up).
+      # WIDENED 0.96 -> 1.00 (2026-08-08) for on-ground servo-load margin: the bench
+      # measured R=0.96 putting the commanded average steering at EXACTLY the 0.2421
+      # clamp — 0.4% of nominal margin, and none at all in practice (item 105).
+      # Must stay EQUAL to MPPI's AckermannConstraints.min_turning_r (item 92).
+      #
+      # THIS FILE IS THE ONLY NAV2 PARAMS FILE. A second one, nav2_params_amcl.yaml,
+      # used to sit beside it carrying a third, disagreeing pair (0.80 here / 0.65 for
+      # min_turning_r — inconsistent with each other, so it broke the "must stay equal"
+      # rule on its own). Nothing referenced it: nav2.launch.py and amcl.launch.py both
+      # default params_file to nav2_amcl.yaml. DELETED 2026-08-16 so nobody edits the
+      # wrong one. Do not restore it.
+      #
+      # (The old "🔜 PENDING: becomes 0.84" note is gone: that step was taken on
+      # 2026-08-24 and then superseded twice over. The value below is current.)
+      #
+      # 🔴 0.84 -> 0.96 on 2026-08-24, then 0.96 -> 1.20 on 2026-08-25, both in lockstep
+      # with MPPI's min_turning_r. The vehicle is ASYMMETRIC: 0.84 is only achievable
+      # turning RIGHT. The LEFT mechanical stop (0.2421 rad, CAD-confirmed) gives
+      # L/tan(0.2421) = 0.953 m, so a symmetric planner radius must be the worse side or
+      # every left corner is planned infeasible. The further step to 1.20 is about path
+      # SMOOTHNESS and the curvature-blind smoother, not the mechanical limit.
+      # See the full reasoning at min_turning_r above -- these two MUST stay equal.
+      minimum_turning_radius: 1.20
+      reverse_penalty: 5.0 #1.0 = no cost
+      change_penalty: 10.0
+      non_straight_penalty: 1.2
+      # 5.0 -> 4.0, retuned WITH the inflation widening (item 91). Widening 0.30->0.45
+      # does not change the cost at a given distance (inflation_radius only truncates
+      # the decay) but it stops truncating sooner, so ~34% more cells carry non-zero
+      # cost: the 1-D cost mass over the inflated band goes 0.1711 -> 0.2299 (x1.344).
+      # cost_penalty MULTIPLIES that field, so holding 5.0 would over-repel the planner
+      # into longer detours and make it refuse passages it previously accepted.
+      # Neutral (repulsion unchanged) would be 5.0/1.344 = 3.72; 4.0 deliberately keeps
+      # a small NET increase in obstacle aversion, which is wanted here because the
+      # footprint also widened, the car cannot rotate out of a tight spot (min radius
+      # 1.00 m), and localisation drift is real. Per-profile tuning comes in Phase 4.
+      cost_penalty: 2.0
+      retrospective_penalty: 0.025
+      lookup_table_size: 10.0
+      cache_obstacle_heuristic: true
+      allow_unknown: true
+      max_iterations: -1
+      max_on_approach_iterations: 1000
+      smooth_path: true
+      motion_model_for_search: "REEDS_SHEPP"
+
+smoother_server:
+  ros__parameters:
+    use_sim_time: false
+    smoother_plugins: ["simple_smoother"]
+    simple_smoother:
+      plugin: "nav2_smoother::SavitzkyGolaySmoother"
+      enforce_path_inversion: true
+      do_refinement: true
+
+behavior_server:
+  ros__parameters:
+    costmap_topic: local_costmap/costmap_raw
+    footprint_topic: local_costmap/published_footprint
+    cycle_frequency: 5.0
+    behavior_plugins: ["backup", "drive_on_heading", "assisted_teleop", "wait"]
+    backup:
+      plugin: "nav2_behaviors/BackUp"
+    drive_on_heading:
+      plugin: "nav2_behaviors/DriveOnHeading"
+    wait:
+      plugin: "nav2_behaviors/Wait"
+    assisted_teleop:
+      plugin: "nav2_behaviors/AssistedTeleop"
+    global_frame: odom
+    robot_base_frame: base_link
+    transform_tolerance: 0.5
+    use_sim_time: false
+    simulate_ahead_time: 2.0
+
+robot_state_publisher:
+  ros__parameters:
+    use_sim_time: false
+
+waypoint_follower:
+  ros__parameters:
+    use_sim_time: false
+    loop_rate: 20
+    stop_on_failure: false
+    waypoint_task_executor_plugin: "wait_at_waypoint"
+    wait_at_waypoint:
+      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
+      enabled: true
+      waypoint_pause_duration: 200
+
+velocity_smoother:
+  ros__parameters:
+    use_sim_time: false
+    smoothing_frequency: 20.0
+    scale_velocities: true
+    feedback: "OPEN_LOOP"
+    # 3rd element (wz) = vx_max/min_radius = 0.4/1.00 = 0.40 — the FOURTH copy of this
+    # limit; must match MPPI wz_max or the smoother passes rates MPPI no longer intends
+    # to produce (turning-radius consistency, item 92). Radius widened 0.96 -> 1.00 for
+    # on-ground servo-load margin (item 105). x elements unchanged.
+    max_velocity: [0.4, 0.0, 0.33]
+    min_velocity: [-0.4, 0.0, -0.33]
+    max_accel: [0.4, 0.0, 0.8]
+    max_decel: [-0.4, 0.0, -0.8]
+    odom_topic: "odom"
+    odom_duration: 0.1
+    deadband_velocity: [0.03, 0.0, 0.0]
+    velocity_timeout: 1.0

@@ -4,7 +4,20 @@
     <xacro:unless value="$(arg hardware)">    
         <gazebo>
             <plugin name="gazebo_ros2_control" filename="libgazebo_ros2_control.so">
+                <!-- controllers.yaml is THE controller tuning and is shared verbatim with
+                     the vehicle: the plugin starts a controller_manager inside gzserver
+                     and hands it these files as params-file arguments, so the
+                     simulated car is driven by the same wheelbase, track, steering clamp
+                     and reference_timeout as the real one.
+
+                     controllers_sim.yaml is the ONLY overlay, and it carries exactly one
+                     idea - use_sim_time - for the controller_manager and each
+                     controller it loads. It must come SECOND: later params-file
+                     arguments win, and this file deliberately re-states nothing else, so
+                     there is no second copy of any tuned value to drift out of sync.
+                     Order matters here; do not swap these two lines. -->
                 <parameters>$(find ackermann_bringup)/config/controllers.yaml</parameters>
+                <parameters>$(find ackermann_bringup)/config/controllers_sim.yaml</parameters>
                 <robot_param>robot_description</robot_param>
                 <robot_param_node>robot_state_publisher</robot_param_node>
             </plugin>

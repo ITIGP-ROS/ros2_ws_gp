@@ -5,6 +5,18 @@
     <xacro:arg name="can_interface" default="vcan0"/>
     <xacro:arg name="enc_counts_per_rev" default="2464"/>
 
+    <!-- Simulation-only knobs; ignored entirely when hardware:=true.
+         sim_lidar  2d    - a 360-ray horizontal scanner publishing /scan directly.
+                    livox - the Mid-360 point-cloud simulation (needs
+                            ros2_livox_simulation, and a pointcloud_to_laserscan
+                            alongside it). Casts 200,000 rays per second against this
+                            scanner's 3,600, and the CPU cost follows the ray count.
+         sim_camera false - drop the simulated camera. The largest single CPU saving in
+                            a Gazebo Classic run, and it removes the need for a
+                            rendering context. See sensors.xacro. -->
+    <xacro:arg name="sim_lidar" default="2d"/>
+    <xacro:arg name="sim_camera" default="true"/>
+
     <xacro:include filename="base.xacro"/>
     <xacro:include filename="sensors.xacro"/>
     <xacro:include filename="control.xacro"/>

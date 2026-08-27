@@ -552,13 +552,43 @@ hardware_interface::return_type AckermannHardwareSystem::write(
   bool ok = can_comms_.set_steering(static_cast<float>(avg_steer_angle));
   ok &= can_comms_.set_motor_values(left_vel, right_vel);
 
-  // Bus-off / link-down detection. Our TX is ~1.6% of a 500 kbit/s bus, so a
-  // failed write is never congestion — it means the link is broken (bus-off,
-  // unplugged Tiva). Surface it after CAN_WRITE_FAILURE_LIMIT consecutive
-  // cycles instead of letting Nav2 keep driving blind on frozen odometry.
+  // Bus-off / link-down detection.
+  //
+  // ⚠️ THE OLD PREMISE HERE WAS WRONG AND IT COST THE VEHICLE. It read: "Our TX is ~1.6%
+  // of a 500 kbit/s bus, so a failed write is never congestion — it means the link is
+  // broken." That accounts for BUS bandwidth but not for the kernel's per-interface tx
+  // QUEUE, which is what actually overflows. The socket is O_NONBLOCK, so a full queue
+  // returns ENOBUFS/EAGAIN immediately, and can0 carries four other local writers
+  // (update_coordinator, road_classification, liveliness_respond, the YOLO CAN node).
+  // Measured 2026-08-26 on a battery boot: a ~166 ms ENOBUFS burst tripped the 5-cycle
+  // limit, this function returned ERROR, ros2_control deactivated the hardware component,
+  // and the vehicle was silently uncommandable with every controller still active. can0
+  // read ERROR-ACTIVE, berr-counter 0/0, bus-off 0 throughout.
+  //
+  // So the two cases are now counted separately: a HARD error (a real errno, link gone)
+  // still escalates in 5 cycles, while CONGESTION is ridden out for CAN_WRITE_CONGESTION_LIMIT.
   if (!ok)
   {
-    if (++can_write_failures_ >= CAN_WRITE_FAILURE_LIMIT)
+    if (can_comms_.last_write_transient())
+    {
+      can_write_failures_ = 0;   // not a link fault; do not age the bus-off counter
+      if (++can_write_congestion_ >= CAN_WRITE_CONGESTION_LIMIT)
+      {
+        RCLCPP_ERROR(
+          rclcpp::get_logger("AckermannHardwareSystem"),
+          "CAN tx queue full for %zu consecutive cycles (~%d ms) — the bus or the queue is "
+          "wedged, not a momentary burst; returning ERROR.",
+          can_write_congestion_, static_cast<int>(can_write_congestion_ * 1000 / 30));
+        return hardware_interface::return_type::ERROR;
+      }
+      // Rate-limited so a burst does not flood the journal the way the raw
+      // "CAN write failed" line from can_comms does.
+      RCLCPP_WARN_THROTTLE(
+        rclcpp::get_logger("AckermannHardwareSystem"), throttle_clock_, 1000,
+        "CAN tx queue full (ENOBUFS) — dropping this cycle's commands and continuing. "
+        "%zu consecutive congested cycles.", can_write_congestion_);
+    }
+    else if (++can_write_failures_ >= CAN_WRITE_FAILURE_LIMIT)
     {
       RCLCPP_ERROR(
         rclcpp::get_logger("AckermannHardwareSystem"),
@@ -571,6 +601,7 @@ hardware_interface::return_type AckermannHardwareSystem::write(
   else
   {
     can_write_failures_ = 0;
+    can_write_congestion_ = 0;
   }
 
   return hardware_interface::return_type::OK;

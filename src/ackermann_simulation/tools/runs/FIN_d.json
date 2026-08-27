@@ -1,0 +1,114 @@
+[
+  {
+    "goal": [
+      5.0,
+      4.0
+    ],
+    "outcome": "SUCCEEDED",
+    "duration_s": 18.2,
+    "final_xy_error_m": 0.119,
+    "final_pose": [
+      5.12,
+      4.01
+    ],
+    "loc_error_final_m": 0.225,
+    "loc_error_median_m": 0.281,
+    "loc_error_p95_m": 0.384,
+    "xtrack_median_m": 0.018,
+    "xtrack_p95_m": 0.09,
+    "distance_travelled_m": 6.78,
+    "steer_p95_rad": 0.1507,
+    "steer_max_rad": 0.286,
+    "steer_at_clamp_pct": 0.2,
+    "cmd_steer_p95_rad": 0.1471,
+    "reverse_pct": 0.0,
+    "plans": 14,
+    "reversals_per_m": 0.752,
+    "plan_min_radius_m": 1.2,
+    "plan_cusps": 0.0
+  },
+  {
+    "goal": [
+      -5.0,
+      -3.0
+    ],
+    "outcome": "SUCCEEDED",
+    "duration_s": 38.3,
+    "final_xy_error_m": 0.14,
+    "final_pose": [
+      -4.86,
+      -3.01
+    ],
+    "loc_error_final_m": 0.182,
+    "loc_error_median_m": 0.164,
+    "loc_error_p95_m": 0.284,
+    "xtrack_median_m": 0.069,
+    "xtrack_p95_m": 0.155,
+    "distance_travelled_m": 11.66,
+    "steer_p95_rad": 0.209,
+    "steer_max_rad": 0.286,
+    "steer_at_clamp_pct": 3.6,
+    "cmd_steer_p95_rad": 0.1936,
+    "reverse_pct": 30.4,
+    "plans": 31,
+    "reversals_per_m": 0.288,
+    "plan_min_radius_m": 1.194,
+    "plan_cusps": 2
+  },
+  {
+    "goal": [
+      6.0,
+      -4.0
+    ],
+    "outcome": "SUCCEEDED",
+    "duration_s": 24.0,
+    "final_xy_error_m": 0.083,
+    "final_pose": [
+      6.08,
+      -3.97
+    ],
+    "loc_error_final_m": 0.234,
+    "loc_error_median_m": 0.229,
+    "loc_error_p95_m": 0.338,
+    "xtrack_median_m": 0.041,
+    "xtrack_p95_m": 0.111,
+    "distance_travelled_m": 9.02,
+    "steer_p95_rad": 0.1672,
+    "steer_max_rad": 0.286,
+    "steer_at_clamp_pct": 0.3,
+    "cmd_steer_p95_rad": 0.1594,
+    "reverse_pct": 0.0,
+    "plans": 20,
+    "reversals_per_m": 0.621,
+    "plan_min_radius_m": 1.2,
+    "plan_cusps": 0.0
+  },
+  {
+    "goal": [
+      -7.0,
+      1.5
+    ],
+    "outcome": "SUCCEEDED",
+    "duration_s": 54.5,
+    "final_xy_error_m": 0.343,
+    "final_pose": [
+      -6.66,
+      1.54
+    ],
+    "loc_error_final_m": 0.184,
+    "loc_error_median_m": 0.219,
+    "loc_error_p95_m": 0.337,
+    "xtrack_median_m": 0.056,
+    "xtrack_p95_m": 0.159,
+    "distance_travelled_m": 18.42,
+    "steer_p95_rad": 0.1863,
+    "steer_max_rad": 0.286,
+    "steer_at_clamp_pct": 2.6,
+    "cmd_steer_p95_rad": 0.1718,
+    "reverse_pct": 14.9,
+    "plans": 43,
+    "reversals_per_m": 0.312,
+    "plan_min_radius_m": 1.2,
+    "plan_cusps": 1
+  }
+]

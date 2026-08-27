@@ -325,7 +325,20 @@ controller_server:
         cost_power: 1
         cost_weight: 7.0
         offset_from_furthest: 3
-        threshold_to_consider: 1.2
+        # 🔵 1.2 -> 0.2. SIMULATION-VALIDATED ONLY. Not yet seen on the vehicle: the
+        # hardware bag that motivated the other changes never reached this failure,
+        # because the planner refused to start at all. Treat as unproven on hardware.
+        #
+        # This parameter is the distance-to-goal BELOW WHICH the critic switches OFF. At
+        # 1.2 m MPPI stopped following the planned path and began homing on the goal --
+        # which a vehicle with a 2.40 m turning circle cannot do. It then dithered in
+        # place until the behaviour tree gave up.
+        # MEASURED in ackermann_simulation, 4-goal course: stock reached 2/4 goals in
+        # each of 3 runs; this value alone reached 4/4. Isolated against the two other
+        # thresholds it was originally bundled with -- GoalCritic alone 2/4,
+        # PathAlignCritic alone 2/4 -- so this one carries the whole effect and those two
+        # were deliberately left at their tuned values.
+        threshold_to_consider: 0.2
       PathAngleCritic:
         enabled: true
         cost_power: 1
@@ -431,6 +444,33 @@ local_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 3.5
           obstacle_min_range: 0.0
+          # 🔴 NEW, was the 0.0 default (newest scan only). Pairs with the coarser
+          # angle_increment in lidar.launch.py -- ship BOTH or neither.
+          #
+          # /scan is not a scanner's output. It is the Mid-360's NON-REPETITIVE rosette
+          # flattened into fixed angular bins, and the rosette samples different bearings
+          # every frame, so a bin that has a return now may have none next frame.
+          # MEASURED on bag 20260826_165022_nav_195020, 1875 scans over 191 s:
+          #     88.5% of the 1442 bins carry a return in a typical scan
+          #     bins that ALWAYS have a return: 0
+          #     bins that NEVER have one:       0
+          #     every single bin is intermittent, median 142 present/absent flips
+          # At the 0.0 default each update uses only the newest scan, so a cell marked
+          # last frame is simply not re-marked this frame and its cost falls -- then
+          # rises again next frame. One cell under a parked vehicle changed 125 times in
+          # 191 s, oscillating between inflated ~65 and INSCRIBED/LETHAL.
+          #
+          # That is what produced "GridBased: failed to create plan, Starting point in
+          # lethal space!" 39 times in that bag, with all 5 goals aborted and none
+          # completed. Note footprint_clearing_enabled is already true and does NOT save
+          # you: it clears obstacle MARKS under the footprint, not the INFLATION of marks
+          # 0.3-0.5 m away, and at inflation_radius 0.40 that inflation is what lands on
+          # the footprint.
+          #
+          # 0.3 s keeps roughly three frames at 10 Hz. ⚠️ Persistence also delays the
+          # clearing of obstacles that genuinely left; do not raise it far without
+          # re-checking that a person walking past stops leaving a ghost.
+          observation_persistence: 0.3
       always_send_full_costmap: false
 
 global_costmap:
@@ -475,6 +515,33 @@ global_costmap:
           raytrace_min_range: 0.0
           obstacle_max_range: 3.5
           obstacle_min_range: 0.0
+          # 🔴 NEW, was the 0.0 default (newest scan only). Pairs with the coarser
+          # angle_increment in lidar.launch.py -- ship BOTH or neither.
+          #
+          # /scan is not a scanner's output. It is the Mid-360's NON-REPETITIVE rosette
+          # flattened into fixed angular bins, and the rosette samples different bearings
+          # every frame, so a bin that has a return now may have none next frame.
+          # MEASURED on bag 20260826_165022_nav_195020, 1875 scans over 191 s:
+          #     88.5% of the 1442 bins carry a return in a typical scan
+          #     bins that ALWAYS have a return: 0
+          #     bins that NEVER have one:       0
+          #     every single bin is intermittent, median 142 present/absent flips
+          # At the 0.0 default each update uses only the newest scan, so a cell marked
+          # last frame is simply not re-marked this frame and its cost falls -- then
+          # rises again next frame. One cell under a parked vehicle changed 125 times in
+          # 191 s, oscillating between inflated ~65 and INSCRIBED/LETHAL.
+          #
+          # That is what produced "GridBased: failed to create plan, Starting point in
+          # lethal space!" 39 times in that bag, with all 5 goals aborted and none
+          # completed. Note footprint_clearing_enabled is already true and does NOT save
+          # you: it clears obstacle MARKS under the footprint, not the INFLATION of marks
+          # 0.3-0.5 m away, and at inflation_radius 0.40 that inflation is what lands on
+          # the footprint.
+          #
+          # 0.3 s keeps roughly three frames at 10 Hz. ⚠️ Persistence also delays the
+          # clearing of obstacles that genuinely left; do not raise it far without
+          # re-checking that a person walking past stops leaving a ghost.
+          observation_persistence: 0.3
       static_layer:
         plugin: "nav2_costmap_2d::StaticLayer"
         map_subscribe_transient_local: true
@@ -552,7 +619,21 @@ planner_server:
       # See the full reasoning at min_turning_r above -- these two MUST stay equal.
       minimum_turning_radius: 1.20
       reverse_penalty: 5.0 #1.0 = no cost
-      change_penalty: 0.0
+      # 🔵 0.0 -> 10.0. SIMULATION-VALIDATED ONLY, same caveat as PathFollowCritic above.
+      #
+      # Penalty for a change in direction of motion during the search. MEASURED in
+      # ackermann_simulation on the one goal that needed a multi-point turn, dose
+      # response over 45 attempts:
+      #     change_penalty  0 -> 13/18 = 72% reached, median 8.7% of time at the clamp
+      #     change_penalty  5 -> 11/12 = 92% reached, median 5.2%
+      #     change_penalty 10 -> 15/15 = 100% reached, median 4.1%
+      #
+      # ⚠️ It does NOT work by producing fewer cusps -- that was the obvious hypothesis
+      # and it was WRONG; cusp counts did not move. It works by producing paths that
+      # demand less steering saturation, and saturation is the variable that actually
+      # predicts failure here: successful goals cluster at 3-7% of time at the clamp,
+      # aborted ones at 10-13%.
+      change_penalty: 10.0
       non_straight_penalty: 1.2
       # 5.0 -> 4.0, retuned WITH the inflation widening (item 91). Widening 0.30->0.45
       # does not change the cost at a given distance (inflation_radius only truncates
@@ -622,7 +703,27 @@ velocity_smoother:
   ros__parameters:
     use_sim_time: false
     smoothing_frequency: 20.0
-    scale_velocities: false
+    # 🔴 false -> true. MEASURED ON THE VEHICLE, bag 20260826_165022_nav_195020.
+    #
+    # With this false the smoother rate-limits vx and wz INDEPENDENTLY. Decelerating vx
+    # while wz persists raises wz/vx, which for an Ackermann vehicle IS the turning
+    # radius: the commanded radius tightens to something the steering physically cannot
+    # reach, ackermann_system.cpp's write() clamps it, and the vehicle then under-steers
+    # relative to what MPPI predicted for itself.
+    #
+    # The bag settles who is at fault, and it is not MPPI. Implied steering
+    # delta = atan(wheelbase * wz / |vx|), computed on both sides of this node:
+    #     /cmd_vel_nav        (MPPI out)  n=670   max 0.1936 rad   0.0% past the clamp
+    #     /cmd_vel_nav_smoothed (here)    n=1233  max 0.7460 rad   3.5% past the clamp
+    # MPPI's own maximum is 0.1936 = atan(0.23529/1.20) to four decimals, i.e. its
+    # AckermannConstraints are exactly honoured. Across 1184 matched in/out pairs this
+    # node INCREASED the implied steering in 40.7% of them, by up to 0.5838 rad, and
+    # pushed 37 commands from inside the 0.2421 LEFT mechanical stop to outside it.
+    #
+    # true makes the smoother scale the components together, preserving vx:wz and
+    # therefore the radius. Cornering linear speed drops slightly when the angular rate
+    # is limited -- that coupling is correct for a car and is the point of the change.
+    scale_velocities: true
     feedback: "OPEN_LOOP"
     # 3rd element (wz) = vx_max/min_radius = 0.4/1.00 = 0.40 — the FOURTH copy of this
     # limit; must match MPPI wz_max or the smoother passes rates MPPI no longer intends

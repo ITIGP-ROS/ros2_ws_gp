@@ -1,0 +1,86 @@
+[
+  {
+    "goal": [
+      -5.0,
+      -3.0
+    ],
+    "outcome": "SUCCEEDED",
+    "duration_s": 43.8,
+    "final_xy_error_m": 0.11,
+    "final_pose": [
+      -4.89,
+      -3.02
+    ],
+    "loc_error_final_m": 0.129,
+    "loc_error_median_m": 0.165,
+    "loc_error_p95_m": 0.307,
+    "xtrack_median_m": 0.094,
+    "xtrack_p95_m": 0.175,
+    "distance_travelled_m": 12.37,
+    "steer_p95_rad": 0.286,
+    "steer_max_rad": 0.286,
+    "steer_at_clamp_pct": 5.5,
+    "cmd_steer_p95_rad": 0.1873,
+    "reverse_pct": 32.2,
+    "plans": 33,
+    "reversals_per_m": 0.327,
+    "plan_min_radius_m": 1.194,
+    "plan_cusps": 2
+  },
+  {
+    "goal": [
+      -5.0,
+      -3.0
+    ],
+    "outcome": "ABORTED",
+    "duration_s": 60.2,
+    "final_xy_error_m": 0.267,
+    "final_pose": [
+      -4.75,
+      -3.08
+    ],
+    "loc_error_final_m": 0.164,
+    "loc_error_median_m": 0.151,
+    "loc_error_p95_m": 0.283,
+    "xtrack_median_m": 0.093,
+    "xtrack_p95_m": 0.293,
+    "distance_travelled_m": 14.55,
+    "steer_p95_rad": 0.286,
+    "steer_max_rad": 0.286,
+    "steer_at_clamp_pct": 7.0,
+    "cmd_steer_p95_rad": 0.1936,
+    "reverse_pct": 36.3,
+    "plans": 47,
+    "reversals_per_m": 0.174,
+    "plan_min_radius_m": 1.194,
+    "plan_cusps": 2
+  },
+  {
+    "goal": [
+      -5.0,
+      -3.0
+    ],
+    "outcome": "SUCCEEDED",
+    "duration_s": 40.2,
+    "final_xy_error_m": 0.128,
+    "final_pose": [
+      -4.88,
+      -3.05
+    ],
+    "loc_error_final_m": 0.121,
+    "loc_error_median_m": 0.181,
+    "loc_error_p95_m": 0.318,
+    "xtrack_median_m": 0.075,
+    "xtrack_p95_m": 0.189,
+    "distance_travelled_m": 12.49,
+    "steer_p95_rad": 0.2059,
+    "steer_max_rad": 0.286,
+    "steer_at_clamp_pct": 2.5,
+    "cmd_steer_p95_rad": 0.1917,
+    "reverse_pct": 28.1,
+    "plans": 32,
+    "reversals_per_m": 0.274,
+    "plan_min_radius_m": 1.194,
+    "plan_cusps": 2.0
+  }
+]

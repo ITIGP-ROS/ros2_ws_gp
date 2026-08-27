@@ -1,6 +1,19 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro">
 
+    <!-- ====================================================================== -->
+    <!-- SIMULATION-ONLY SENSOR MODELLING                                        -->
+    <!--                                                                        -->
+    <!-- Every <gazebo> block below is inert on the vehicle: hardware:=true      -->
+    <!-- loads ackermann_hardware over CAN and no Gazebo plugin is ever read.    -->
+    <!-- The LINKS and JOINTS, by contrast, are shared by both paths and define  -->
+    <!-- the TF tree the real sensors publish into - do not gate those on       -->
+    <!-- $(arg hardware) or the vehicle loses frames.                            -->
+    <!--                                                                        -->
+    <!-- Two args steer the simulated sensors (declared in robot.xacro):         -->
+    <!--   sim_lidar  : 2d (default) | livox                                     -->
+    <!--   sim_camera : true (default) | false                                   -->
+    <!-- ====================================================================== -->
 
     <!-- ====== CAMERA LINK ====== -->
     <link name="camera_link">
@@ -40,45 +53,81 @@
         <origin xyz="0 0 0" rpy="${-pi/2} 0 ${-pi/2}"/>
     </joint>
 
-    <!-- ====== CAMERA GAZEBO ======= -->
-    <gazebo reference="camera_link">
-            <sensor name="camera" type="camera">
-                <always_on>1</always_on>
-                <update_rate>20</update_rate>
-                <visualize>true</visualize>
-                <camera>
-                    <horizontal_fov>1.3962634</horizontal_fov>
-                    <image>
-                        <width>1920</width>
-                        <height>1080</height>
-                        <format>R8G8B8</format>
-                    </image>
-                    <clip>
-                        <near>0.1</near>
-                        <far>15</far>
-                    </clip>
-                    <noise>
-                        <type>gaussian</type>
-                        <mean>0.0</mean>
-                        <stddev>0.007</stddev>
-                    </noise>
-                </camera>
-                <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
-                    <ros>
-                        <remapping>~/image_raw:=camera/image_raw</remapping>
-                        <remapping>~/camera_info:=camera/camera_info</remapping>
-                    </ros>
-                    <camera_name>camera</camera_name>
-                    <!-- Match your actual optical link name -->
-                    <frame_name>camera_optical_frame</frame_name>
-                    <hack_baseline>0.0</hack_baseline>
-                </plugin>
-            </sensor>
-    </gazebo>
+    <!-- ====== CAMERA GAZEBO (SIMULATION ONLY) ======= -->
+    <!--
+      RESOLUTION IS 640x360, NOT the 1920x1080 the real camera runs at, and that is
+      deliberate.
 
+      MEASURED, arena.world, headless gzserver, 16-core workstation, gzserver CPU as a
+      percentage of ONE core:
+          no camera (sim_camera:=false)   19%
+          camera 640x360 @ 10 Hz          34%
+          camera 1920x1080 @ 20 Hz        52%
+      Real-time factor stayed 1.00 in all three, so on this machine the camera costs
+      headroom rather than accuracy - but at full resolution it costs 33 points against
+      19 for the entire rest of the simulation, physics and lidar included. It is the
+      most expensive thing in the world by a wide margin, and on a slower machine that
+      is where the real-time factor goes.
 
-    <xacro:if value="$(arg hardware)">    
+      640x360 is the SAME 16:9 aspect and the same horizontal_fov, so camera_info's
+      intrinsics scale linearly and anything consuming normalised detections is
+      unaffected. Raise it when the camera is the thing under test.
+
+      Set sim_camera:=false to drop it entirely. Do that for navigation-only runs: it
+      also lets gzserver run with no rendering context at all, since the 2D lidar below
+      is a CPU 'ray' sensor rather than 'gpu_ray'.
+    -->
+    <xacro:if value="$(arg sim_camera)">
+        <xacro:property name="sim_camera_width" value="640"/>
+        <xacro:property name="sim_camera_height" value="360"/>
+        <xacro:property name="sim_camera_rate" value="10"/>
+
+        <gazebo reference="camera_link">
+                <sensor name="camera" type="camera">
+                    <always_on>1</always_on>
+                    <update_rate>${sim_camera_rate}</update_rate>
+                    <visualize>false</visualize>
+                    <camera>
+                        <horizontal_fov>1.3962634</horizontal_fov>
+                        <image>
+                            <width>${sim_camera_width}</width>
+                            <height>${sim_camera_height}</height>
+                            <format>R8G8B8</format>
+                        </image>
+                        <clip>
+                            <near>0.1</near>
+                            <far>15</far>
+                        </clip>
+                        <noise>
+                            <type>gaussian</type>
+                            <mean>0.0</mean>
+                            <stddev>0.007</stddev>
+                        </noise>
+                    </camera>
+                    <plugin name="camera_controller" filename="libgazebo_ros_camera.so">
+                        <ros>
+                            <remapping>~/image_raw:=camera/image_raw</remapping>
+                            <remapping>~/camera_info:=camera/camera_info</remapping>
+                        </ros>
+                        <camera_name>camera</camera_name>
+                        <!-- Match your actual optical link name -->
+                        <frame_name>camera_optical_frame</frame_name>
+                        <hack_baseline>0.0</hack_baseline>
+                    </plugin>
+                </sensor>
+        </gazebo>
+    </xacro:if>
+
     <!-- ====== LIDAR LINK ====== -->
+    <!--
+      DEFINED FOR BOTH hardware:=true AND hardware:=false. It used to live inside an
+      <xacro:if value="$(arg hardware)"> and the simulation got its mount frame from the
+      Livox macro instead, which meant the two paths published DIFFERENT TF trees: on the
+      vehicle /scan arrives in lidar_link (lidar.launch.py sets the driver's frame_id and
+      pointcloud_to_laserscan's target_frame to it), in simulation it arrived in 'livox'.
+      Anything that names a frame - slam.yaml, the RViz configs, the costmap observation
+      sources - then had to mean something different in each. One tree, one set of names.
+    -->
     <link name="lidar_link">
         <visual>
             <geometry>
@@ -119,52 +168,108 @@
         <origin xyz="0 0 0" rpy="0 0 0"/>
     </joint>
 
-    <!-- ====== LIDAR GAZEBO ======= -->
-     <gazebo reference="lidar_link">
-        <!-- Classic uses 'ray' instead of 'gpu_lidar' -->
-        <sensor name="lidar" type="ray">
-            <pose> 0 0 0 0 0 0 </pose>
-            <always_on>1</always_on>
-            <update_rate>10</update_rate>
-            <visualize>true</visualize>
-            <ray>
-                <scan>
-                    <horizontal>
-                        <samples>360</samples>
-                        <resolution>1.0</resolution>
-                        <min_angle>-3.14159</min_angle>
-                        <max_angle>3.14159</max_angle>
-                    </horizontal>
-                </scan>
-                <range>
-                    <min>0.15</min>
-                    <max>12.0</max>
-                    <resolution>0.01</resolution>
-                </range>
-                <noise>
-                    <type>gaussian</type>
-                    <mean>0.0</mean>
-                    <stddev>0.01</stddev>
-                </noise>
-            </ray>
-            <plugin name="laser_controller" filename="libgazebo_ros_ray_sensor.so">
-                <ros>
-                    <remapping>~/out:=scan</remapping>
-                </ros>
-                <output_type>sensor_msgs/LaserScan</output_type>
-                <frame_name>lidar_link</frame_name>
-            </plugin>
-        </sensor>
-    </gazebo>
-    </xacro:if>
+    <!-- ====== LIDAR GAZEBO (SIMULATION ONLY) ======= -->
+    <xacro:unless value="$(arg hardware)">
 
-     <xacro:unless value="$(arg hardware)"> 
-    <!-- ====== LIDAR MID360s ======= -->
-     <xacro:include filename="$(find ros2_livox_simulation)/urdf/mid360.xacro" />
+        <!--
+          THE DEFAULT: a plain 2D scanner, NOT a simulated Mid-360.
 
-    <xacro:mid360 name="livox" parent="base_link" topic="mid360">
-        <origin xyz="0.13 0 0.279" rpy="0 0 0"/>
-    </xacro:mid360>
+          WHY. The Livox simulation reproduces the Mid-360's non-repetitive rosette scan
+          by raycasting a full 3D point cloud every frame and then publishing it, and
+          Gazebo Classic does that raycasting on the CPU in the physics thread. The
+          vehicle's own stack then had to run pointcloud_to_laserscan on top to get /scan
+          back out of it. That is a large, continuous CPU cost paid to synthesise a cloud
+          whose only consumer in the navigation path is a flattening node - Nav2 here is
+          driven entirely by /scan (nav2_amcl.yaml: both costmaps' observation source is
+          'scan' with data_type LaserScan, and amcl's scan_topic is scan).
+
+          360 rays at 10 Hz is 3,600 raycasts per second. A Mid-360 emits 200,000 points
+          per second, and the simulation has to cast every one of them; the cost follows
+          the ray count fairly directly. (That ratio is from the sensor's specification -
+          the Livox path is not measured here, because ros2_livox_simulation is not in
+          this workspace.) What IS measured, in arena.world on a 16-core workstation:
+          gzserver sits at 19% of one core with this scanner and no camera, real-time
+          factor 1.00.
+
+          The output is the same TYPE the vehicle's pointcloud_to_laserscan produces -
+          sensor_msgs/LaserScan on /scan, frame lidar_link, from the same mount point -
+          so the Nav2 tuning under test is the tuning that runs on the car.
+
+          WHAT IS GIVEN UP, explicitly: this is a single horizontal slice at the sensor's
+          own height, so overhangs, table tops and torsos above or below the plane are
+          invisible. On the vehicle the flattened Mid-360 slab spans -0.15..0.30 m and
+          catches some of them. If the thing being tested is 3D obstacle handling or the
+          PointPillars path, this is the wrong sensor - use sim_lidar:=livox and accept
+          the frame rate.
+
+          RANGES ARE MATCHED TO THE CONSUMERS, not to a datasheet:
+            min 0.2 / max 15.0  ==  amcl's laser_min_range / laser_max_range
+            10 Hz               ==  lidar.launch.py's publish_freq on the real driver
+          Returns beyond a consumer's own limit are discarded by that consumer anyway, so
+          simulating a 40 m Mid-360 range would only cost raycast distance for nothing.
+
+          type="ray", NOT "gpu_ray": CPU raycasting needs no rendering context, so this
+          works in a headless gzserver and on a machine with no usable GPU. visualize is
+          false because true makes gzclient draw every beam.
+        -->
+        <xacro:if value="${'$(arg sim_lidar)' == '2d'}">
+            <gazebo reference="lidar_link">
+                <sensor name="lidar" type="ray">
+                    <pose>0 0 0 0 0 0</pose>
+                    <always_on>1</always_on>
+                    <update_rate>10</update_rate>
+                    <visualize>false</visualize>
+                    <ray>
+                        <scan>
+                            <horizontal>
+                                <samples>360</samples>
+                                <resolution>1.0</resolution>
+                                <min_angle>-3.14159</min_angle>
+                                <max_angle>3.14159</max_angle>
+                            </horizontal>
+                        </scan>
+                        <range>
+                            <min>0.2</min>
+                            <max>15.0</max>
+                            <resolution>0.01</resolution>
+                        </range>
+                        <noise>
+                            <type>gaussian</type>
+                            <mean>0.0</mean>
+                            <stddev>0.01</stddev>
+                        </noise>
+                    </ray>
+                    <plugin name="laser_controller" filename="libgazebo_ros_ray_sensor.so">
+                        <ros>
+                            <remapping>~/out:=scan</remapping>
+                        </ros>
+                        <output_type>sensor_msgs/LaserScan</output_type>
+                        <frame_name>lidar_link</frame_name>
+                    </plugin>
+                </sensor>
+            </gazebo>
+        </xacro:if>
+
+        <!--
+          THE HEAVY PATH, kept for when 3D is actually the thing being tested.
+          Needs ros2_livox_simulation on the workspace; it is NOT a dependency of this
+          package, so building without it is fine as long as sim_lidar stays 2d.
+          xacro evaluates <xacro:if> before expanding the include, so the $(find ...)
+          below is never resolved unless this branch is selected - verified, not assumed.
+
+          It publishes a PointCloud2 on /mid360_PointCloud2 in frame 'livox' and does NOT
+          publish /scan, so a pointcloud_to_laserscan matching lidar.launch.py's
+          parameters has to be run alongside it. sim.launch.py does that automatically
+          when it is given sim_lidar:=livox.
+        -->
+        <xacro:if value="${'$(arg sim_lidar)' == 'livox'}">
+            <xacro:include filename="$(find ros2_livox_simulation)/urdf/mid360.xacro"/>
+
+            <xacro:mid360 name="livox" parent="base_link" topic="mid360">
+                <origin xyz="0.13 0 0.279" rpy="0 0 0"/>
+            </xacro:mid360>
+        </xacro:if>
+
     </xacro:unless>
 
     <!-- ====== IMU LINK ====== -->
@@ -197,11 +302,26 @@
     </joint>
 
     <!-- ====== IMU GAZEBO  ====== -->
+    <!--
+      TWO CONSUMERS READ THIS ONE SENSOR, on purpose.
+
+      gazebo_ros2_control's GazeboSystem binds it to the 'imu_sensor' state interfaces
+      declared in control.xacro, which is what imu_broadcaster publishes as
+      /imu_broadcaster/imu - the SAME topic the Tiva IMU feeds on the vehicle, so
+      imu_scale.py -> /imu_corrected -> ekf.yaml's imu0 is one unmodified chain in both
+      places.
+
+      The libgazebo_ros_imu_sensor plugin below publishes the same measurement again on
+      /imu/data, independently of ros2_control. It is kept as the fallback sim.launch.py
+      selects with imu_source:=gazebo, and costs nothing measurable.
+
+      visualize is false: true draws the sensor axes in gzclient every frame.
+    -->
     <gazebo reference="imu_link">
         <sensor name="imu_sensor" type="imu">
             <always_on>true</always_on>
             <update_rate>100</update_rate>
-            <visualize>true</visualize>
+            <visualize>false</visualize>
             <plugin name="imu_plugin" filename="libgazebo_ros_imu_sensor.so">
                 <ros>
                     <remapping>~/out:=imu/data</remapping>

@@ -81,7 +81,24 @@
       <ClearEntireCostmap name="ClearLocalCostmap-Start" service_name="local_costmap/clear_entirely_local_costmap"/>
       <ClearEntireCostmap name="ClearGlobalCostmap-Start" service_name="global_costmap/clear_entirely_global_costmap"/>
 
-      <Timeout msec="60000">
+      <!-- 🔵 60000 -> 120000. SIMULATION-VALIDATED ONLY - see the two 🔵 notes in
+           nav2_amcl.yaml. This is a HARD CAP on how long any single goal may run, not a
+           retry count: when it expires it halts the subtree, which cancels an in-flight
+           FollowPath and aborts the goal, with no recovery behaviour involved.
+
+           In simulation, once the vehicle could actually complete multi-point turns,
+           6 of 15 successful runs of one goal finished between 62.8 s and 90.0 s - every
+           one of which this cap would have killed while the controller was still
+           replanning and closing on the goal. Under the stock tuning no successful goal
+           had ever exceeded 23 s, which is why 60 s looked generous.
+
+           ⚠️ NOT yet justified by hardware. In bag 20260826_165022_nav_195020 the
+           longest goal ran 55.7 s and this Timeout never fired; every abort there came
+           from the planner refusing to start. Revert to 60000 unless you observe goals
+           aborting at exactly 60 s WHILE still replanning and making progress - that is
+           the signature this value exists to fix. Doubling it also doubles the window a
+           bad plan can be executed before the stack gives up. -->
+      <Timeout msec="120000">
         <RecoveryNode number_of_retries="6" name="NavigateRecovery">
 
           <PipelineSequence name="NavigateWithReplanning">

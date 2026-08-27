@@ -1,5 +1,7 @@
 #include "ackermann_hardware/can_comms.hpp"
 
+#include <cerrno>
+
 bool CanComms::connect(const std::string &interface)
 {
     socket_fd_ = socket(PF_CAN, SOCK_RAW, CAN_RAW);
@@ -64,9 +66,14 @@ bool CanComms::send_hardware_reset()
 
     ssize_t nbytes = write(socket_fd_, &frame, sizeof(struct can_frame));
     if (nbytes != sizeof(struct can_frame)) {
+        // ENOBUFS/EAGAIN on an O_NONBLOCK socket means the tx queue is full right now,
+        // not that the link is down. EINTR is a signal, equally transient.
+        last_write_transient_ =
+            (errno == ENOBUFS || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
         std::cerr << "CAN write failed: " << strerror(errno) << std::endl;
         return false;
     }
+    last_write_transient_ = false;
     return true;
 }
 
@@ -175,9 +182,14 @@ bool CanComms::set_motor_values(float left_vel, float right_vel)
 
     ssize_t nbytes = write(socket_fd_, &frame, sizeof(struct can_frame));
     if (nbytes != sizeof(struct can_frame)) {
+        // ENOBUFS/EAGAIN on an O_NONBLOCK socket means the tx queue is full right now,
+        // not that the link is down. EINTR is a signal, equally transient.
+        last_write_transient_ =
+            (errno == ENOBUFS || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
         std::cerr << "CAN write failed: " << strerror(errno) << std::endl;
         return false;
     }
+    last_write_transient_ = false;
     return true;
 }
 
@@ -194,8 +206,13 @@ bool CanComms::set_steering(float steer_angle)
 
     ssize_t nbytes = write(socket_fd_, &frame, sizeof(struct can_frame));
     if (nbytes != sizeof(struct can_frame)) {
+        // ENOBUFS/EAGAIN on an O_NONBLOCK socket means the tx queue is full right now,
+        // not that the link is down. EINTR is a signal, equally transient.
+        last_write_transient_ =
+            (errno == ENOBUFS || errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR);
         std::cerr << "CAN write failed: " << strerror(errno) << std::endl;
         return false;
     }
+    last_write_transient_ = false;
     return true;
 }

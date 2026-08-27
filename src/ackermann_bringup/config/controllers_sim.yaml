@@ -1,0 +1,46 @@
+# SIMULATION OVERLAY FOR controllers.yaml -- use_sim_time AND NOTHING ELSE.
+#
+# Loaded by the gazebo_ros2_control plugin in control.xacro as a SECOND --params-file,
+# after controllers.yaml, and only when hardware:=false. Later files win, so anything
+# restated here would silently override the real tuning in simulation and then drift
+# away from it. That is why this file carries one key per node and no geometry, no
+# limits, no timeouts: there is exactly one copy of those, in controllers.yaml, and the
+# simulated vehicle is driven by it unchanged.
+#
+# WHY IT IS NEEDED AT ALL. The controller_manager runs INSIDE gzserver here, not as a
+# node this workspace launches, so there is no Node(parameters=[{'use_sim_time': True}])
+# to attach it to -- the plugin's <parameters> tags are the only way in. Without it the
+# controller_manager and its controllers timestamp against the wall clock while Gazebo
+# publishes /clock, and every downstream consumer of a controller message (the EKF above
+# all) sees timestamps from a different timeline than the transforms.
+#
+# THE CONTROLLERS ARE LISTED INDIVIDUALLY on purpose. Setting use_sim_time on the
+# controller_manager alone is not obviously sufficient in every controller_manager
+# release; each controller is its own node and reads its own parameters, so they are
+# named here rather than relying on inheritance.
+#
+# 🔴 enable_odom_tf IS DELIBERATELY ABSENT.
+# The simulation configuration this file replaces set it to TRUE, which was correct only
+# while the EKF was not running. sim.launch.py runs ekf_filter_node exactly as
+# robot.launch.py does, and ekf.yaml (world_frame: odom, base_link_frame: base_footprint)
+# makes it the owner of odom -> base_footprint. Flipping enable_odom_tf here would put a
+# second publisher on that edge, and a TF edge with two publishers jitters
+# non-deterministically underneath the entire navigation stack -- the exact failure
+# controllers.yaml's own comment warns about. Leave it false, which is what
+# controllers.yaml already says.
+
+controller_manager:
+  ros__parameters:
+    use_sim_time: true
+
+joint_state_broadcaster:
+  ros__parameters:
+    use_sim_time: true
+
+ackermann_controller:
+  ros__parameters:
+    use_sim_time: true
+
+imu_broadcaster:
+  ros__parameters:
+    use_sim_time: true
