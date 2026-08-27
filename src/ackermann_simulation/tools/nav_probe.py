@@ -38,7 +38,7 @@ from rclpy.qos import qos_profile_sensor_data
 
 from gazebo_msgs.msg import ModelStates
 from gazebo_msgs.srv import SetEntityState
-from geometry_msgs.msg import PoseWithCovarianceStamped, TwistStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped, Twist, TwistStamped
 from nav_msgs.msg import Path
 from nav2_msgs.action import NavigateToPose
 from nav2_msgs.srv import ClearEntireCostmap
@@ -158,6 +158,14 @@ class Probe(Node):
         self.create_subscription(Path, '/plan', self._plan, 10)
         self.create_subscription(JointState, '/joint_states', self._joints, qos_profile_sensor_data)
         self.create_subscription(TwistStamped, '/ackermann_controller/reference', self._cmd, 10)
+        # The velocity_smoother's own input and output. Measuring BOTH is what separates
+        # "MPPI asked for an infeasible turn" from "the smoother made it infeasible":
+        # on hardware MPPI never exceeded atan(L/min_turning_r) while the smoother
+        # exceeded the steering clamp on 2.5% of commands, purely in ramp transients.
+        self.create_subscription(Twist, '/cmd_vel_nav', self._nav_in, 10)
+        self.create_subscription(Twist, '/cmd_vel_nav_smoothed', self._nav_out, 10)
+        self.nav_in = []
+        self.nav_out = []
         self.steer = []      # actual steering angle at the wheels
         self.cmd_steer = []  # steering the command implies: atan(L*wz/vx)
         self.cmd_vx = []
@@ -183,6 +191,19 @@ class Probe(Node):
         for name in ('front_left_steering_joint', 'front_right_steering_joint'):
             if name in m.name:
                 self.steer.append(m.position[m.name.index(name)])
+
+    def _delta(self, vx, wz):
+        return math.atan(WHEELBASE * wz / abs(vx)) if abs(vx) > 0.02 else None
+
+    def _nav_in(self, m):
+        d = self._delta(m.linear.x, m.angular.z)
+        if d is not None:
+            self.nav_in.append((time.time(), abs(d)))
+
+    def _nav_out(self, m):
+        d = self._delta(m.linear.x, m.angular.z)
+        if d is not None:
+            self.nav_out.append((time.time(), abs(d), m.linear.x))
 
     def _cmd(self, m):
         vx, wz = m.twist.linear.x, m.twist.angular.z
@@ -227,9 +248,11 @@ class Probe(Node):
                     self, cli.call_async(ClearEntireCostmap.Request()), timeout_sec=5)
         self.spin(1.0)
 
-    def run_goal(self, gx, gy, timeout):
+    def run_goal(self, gx, gy, timeout, gyaw=0.0):
         self.samples.clear()
         self.trace.clear()
+        self.nav_in.clear()
+        self.nav_out.clear()
         self.steer.clear()
         self.cmd_steer.clear()
         self.cmd_vx.clear()
@@ -239,7 +262,8 @@ class Probe(Node):
         g.pose.header.frame_id = 'map'
         g.pose.pose.position.x = float(gx)
         g.pose.pose.position.y = float(gy)
-        g.pose.pose.orientation.w = 1.0
+        g.pose.pose.orientation.z = math.sin(gyaw / 2)
+        g.pose.pose.orientation.w = math.cos(gyaw / 2)
         fut = self.ac.send_goal_async(g)
         rclpy.spin_until_future_complete(self, fut, timeout_sec=15)
         gh = fut.result()
@@ -301,6 +325,25 @@ class Probe(Node):
         if self.cmd_vx:
             out['reverse_pct'] = round(100.0 * sum(1 for v in self.cmd_vx if v < -0.01)
                                        / len(self.cmd_vx), 1)
+        # smoother distortion: does the ramp push implied steering past the clamp?
+        if self.nav_in and self.nav_out:
+            ins = sorted(d for _, d in self.nav_in)
+            outs = sorted(d for _, d, _ in self.nav_out)
+            out['mppi_steer_max'] = round(ins[-1], 4)
+            out['smoothed_steer_max'] = round(outs[-1], 4)
+            out['mppi_past_clamp_pct'] = round(
+                100.0 * sum(1 for d in ins if d > STEER_CLAMP) / len(ins), 2)
+            out['smoothed_past_clamp_pct'] = round(
+                100.0 * sum(1 for d in outs if d > STEER_CLAMP) / len(outs), 2)
+            pairs, i = [], 0
+            for t, d, _vx in self.nav_out:
+                while i + 1 < len(self.nav_in) and self.nav_in[i + 1][0] <= t:
+                    i += 1
+                pairs.append((self.nav_in[i][1], d))
+            if pairs:
+                out['smoother_inflated_pct'] = round(
+                    100.0 * sum(1 for a, b in pairs if b > a + 1e-4) / len(pairs), 1)
+
         if plan_snapshots:
             pms = [path_metrics(p) for p in plan_snapshots]
             pms = [m for m in pms if m]
@@ -316,7 +359,10 @@ class Probe(Node):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('goals', nargs='*', help='goals as x,y')
+    ap.add_argument('goals', nargs='*',
+                    help='goals as x,y or x,y,yaw (yaw in rad). Orientation MATTERS: a '
+                         'goal behind the vehicle with yaw 0 is satisfied by simply '
+                         'reversing to it, which does not test turning at all.')
     ap.add_argument('--course', action='store_true', help='use the standard 4-goal course')
     ap.add_argument('--start', default='0,0,0', help='reset pose x,y,yaw before each goal')
     ap.add_argument('--timeout', type=float, default=90.0)
@@ -324,7 +370,9 @@ def main():
     ap.add_argument('--trace', help='write a per-sample CSV of the LAST goal here')
     args = ap.parse_args()
 
-    goals = COURSE if args.course else [tuple(float(v) for v in g.split(',')) for g in args.goals]
+    goals = ([(x, y, 0.0) for x, y in COURSE] if args.course
+             else [tuple(float(v) for v in g.split(',')) + (0.0,) * (3 - len(g.split(',')))
+                   for g in args.goals])
     if not goals:
         ap.error('give goals as x,y or pass --course')
     sx, sy, syaw = (float(v) for v in args.start.split(','))
@@ -337,9 +385,9 @@ def main():
     n.spin(2.0)
 
     results = []
-    for gx, gy in goals:
+    for gx, gy, gyaw in goals:
         n.reset(sx, sy, syaw)
-        r = n.run_goal(gx, gy, args.timeout)
+        r = n.run_goal(gx, gy, args.timeout, gyaw)
         results.append(r)
         print(f"goal ({gx:5.1f},{gy:5.1f})  {r['outcome']:9s}  " + '  '.join(
             f'{k}={v}' for k, v in r.items() if k not in ('goal', 'outcome', 'final_pose')))
@@ -352,6 +400,8 @@ def main():
                        ('reversals_per_m', 'curvature reversals/m'),
                        ('plan_min_radius_m', 'plan min radius (want >=1.20)'),
                        ('plan_cusps', 'plan cusps (reversals)'),
+                       ('smoothed_past_clamp_pct', 'smoothed past steer clamp %'),
+                       ('smoother_inflated_pct', 'smoother inflated steering %'),
                        ('loc_error_median_m', 'localisation error median')):
         vals = [r[key] for r in results if key in r]
         if vals:

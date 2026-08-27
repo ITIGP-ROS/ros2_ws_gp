@@ -41,7 +41,25 @@ ackermann_controller:
     rear_wheels_radius: 0.0325
     front_steering: true
 
-    max_steering_angle: 0.286 # 13.87 deg = real LEFT mechanical limit (Tiva steering_control.c); conservative symmetric clamp for Nav2 consistency. Real travel is asymmetric L +0.2421 / R -0.3037.
+    # ⚠️ THIS PARAMETER IS INERT - ackermann_steering_controller DOES NOT READ IT.
+    # The controller declares exactly five parameters: wheelbase, front_wheel_track,
+    # rear_wheel_track, front_wheels_radius, rear_wheels_radius. "max_steering_angle"
+    # is not among them, and it appears nowhere in the nav2/ros2_control install except
+    # gazebo_plugins. An undeclared key in a --param-file is silently ignored, which is
+    # why the controller still loads. Kept only because the VALUE is now correct and
+    # documents intent; do not rely on it to clamp anything.
+    #
+    # The clamps that actually exist, both SYMMETRIC at 0.286 rad (16.4 deg):
+    #   firmware   Vehicle-Control steering_control.c:70-71  SC_LIMIT_LEFT/RIGHT_RAD
+    #   host       ackermann_hardware/src/ackermann_system.cpp  STEER_MAX_LEFT/RIGHT
+    #   simulation ackermann_description/urdf/base.xacro  steering_max (URDF joint limit)
+    #
+    # The old note here read "Real travel is asymmetric L +0.2421 / R -0.3037". That is
+    # FALSE and was corrected 2026-08-27. Those were pre-2026-08-16 servo/pot-side
+    # figures, never wheel-angle measurements, wrong by ~2.3x left and ~1.9x right
+    # because the pot sits upstream of the linkage (servo_cfg.h says so at length).
+    # 0.286 rad -> minimum turning radius L/tan(0.286) = 0.80 m, both directions.
+    max_steering_angle: 0.286
 
     # Controller params
     #
@@ -78,6 +96,26 @@ ackermann_controller:
     #
     # Note this only gates the TRANSFORM. The ~/odometry topic that feeds the EKF
     # (ekf.yaml odom0) is published regardless.
+    # 🔴 THE CONTROLLER'S DEFAULT COVARIANCE IS PLACEHOLDER JUNK - set it explicitly.
+    # steering_controllers_library declares
+    #     twist_covariance_diagonal = {0.0, 7.0, 14.0, 21.0, 28.0, 35.0}
+    # which is an index sequence, not a covariance. Leaving it unset published a vx
+    # variance of ZERO - telling the EKF that wheel odometry speed is perfect and can
+    # never be corrected - and a yaw-rate variance of 35, which any filter would ignore.
+    #
+    # Values below are MEASURED, not guessed (bag 20260827_073550, 200 AMCL intervals):
+    #   yaw rate: the steering-derived heading error is 0.0140 rad per ~2.5 s interval
+    #     against the IMU's 0.0078, i.e. a variance ratio of (0.0140/0.0078)^2 = 3.2.
+    #     imu_broadcaster declares 0.01 for angular velocity and imu_scale.py multiplies
+    #     it by k^2, giving 0.0132 at k=1.148. 0.0132 * 3.2 = 0.042 keeps the two yaw
+    #     sources in the ratio the measurement actually supports, without touching the
+    #     IMU's own declaration.
+    #   vx: 0.001 (std 0.032 m/s) - encoder odometry on a hard floor, loose enough that
+    #     the EKF will still correct it, unlike the 0.0 it was publishing.
+    # Unused axes are given small-but-nonzero values; a zero variance anywhere is a trap.
+    twist_covariance_diagonal: [0.001, 0.001, 0.001, 0.01, 0.01, 0.042]
+    pose_covariance_diagonal:  [0.001, 0.001, 0.001, 0.01, 0.01, 0.01]
+
     base_frame_id: base_footprint
     odom_frame_id: odom
     enable_odom_tf: false

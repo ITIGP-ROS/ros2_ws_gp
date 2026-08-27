@@ -230,6 +230,28 @@ controller_server:
         # 0.84 NOT 0.80: L/tan(0.286) = 0.80 exactly, which puts commanded steering ON
         # the clamp with zero margin — the identical condition item 105 was raised to fix.
         #
+        # ⚠️⚠️ THE ASYMMETRY ARGUMENT BELOW IS FALSE. Left as written for history, but
+        # do not act on it. Corrected 2026-08-27 against the firmware source
+        # (Vehicle-Control) and 6342 samples of vehicle joint_states:
+        #   * The mechanism is SYMMETRIC. Both the firmware clamp
+        #     (steering_control.c:70-71, SC_LIMIT_*_RAD) and the host clamp are
+        #     +/-0.286 rad. Minimum radius is L/tan(0.286) = 0.80 m in BOTH directions.
+        #   * 0.2421 / 0.3037 were never wheel angles. servo_cfg.h: "NOT wheel-angle
+        #     measurements ... wrong by ~2.3x (left) and ~1.9x (right)" because the
+        #     feedback pot sits upstream of the linkage. Superseded 2026-08-16.
+        #   * The only asymmetry that ever existed was a STALE HOST CLAMP in
+        #     ackermann_system.cpp, which clipped LEFT at 0.2421 while the firmware
+        #     allowed 0.286. Fixed 2026-08-27; the vehicle is symmetric now.
+        #   * Measured: cot(outer)-cot(inner) = 0.510 with ZERO spread = exactly
+        #     track/wheelbase, i.e. an ideal symmetric Ackermann linkage.
+        # So "0.84 is only achievable turning RIGHT" was an artefact of that clamp.
+        # 0.84 is now infeasible for a different and real reason: it needs 0.2731 rad
+        # of bicycle steering, and the INNER wheel must exceed that (0.2930 > 0.286).
+        # The true floor, inner-wheel limited, is about 0.86 m.
+        # ⚠️ The 1.20 value below still has an INDEPENDENT justification - path
+        # smoothness, per smoothfix.py - which this correction does NOT touch. Do not
+        # lower it on the strength of this note alone; measure first.
+        #
         # 🔴 RAISED 0.84 -> 0.96 on 2026-08-24, THEN 0.96 -> 1.20 ON 2026-08-25 (smoothfix.py;
         # see the note after this one). THE VEHICLE IS ASYMMETRIC and 0.84 is only
         # achievable turning RIGHT. The real mechanical stops, CAD-confirmed and enforced by

@@ -19,14 +19,35 @@ ekf_filter_node:
     # ==================================
     odom0: /ackermann_controller/odometry
     
-    # Due to the lack of steering encoder
-    # Only enable Linear X Velocity
-    # Disable Yaw Velocity from odometry (let IMU handle all turns)
-    # Although a limitation, it has been reliable so far
+    # 🔴 YAW VELOCITY IS NOW FUSED FROM ODOMETRY TOO (2026-08-27). The old note here
+    # read "Due to the lack of steering encoder ... let IMU handle all turns". There is
+    # no lack of a steering sensor - there is a rack pot, reported on CAN 0x130. It was
+    # simply unusable: its sign was INVERTED against the setpoint and its scale short by
+    # ~35%, so the steering angle reaching this filter was garbage and disabling it was
+    # correct. ackermann_system.cpp now maps it properly (see the calibration comment
+    # there), which is what makes this line safe to turn on.
+    #
+    # MEASURED before enabling, bag 20260827_073550, 200 AMCL intervals, heading error:
+    #     IMU                       median 0.0078   p90 0.0617   mean 0.0217
+    #     steering yaw (corrected)  median 0.0140   p90 0.0367   mean 0.0180
+    # The IMU is better typically; the steering estimate is better in the TAIL and on
+    # the mean. They fail differently - a gyro drifts and has a scale error, geometry
+    # does not; geometry breaks under wheel slip, a gyro does not. Fusing both is worth
+    # more than either, and the relative weighting is carried by the covariances set in
+    # controllers.yaml (yaw-rate variance 0.042 against the IMU's effective 0.0132).
+    #
+    # It also removes a documented single point of failure: imu_scale.py's own docstring
+    # warns "IF THIS NODE IS NOT RUNNING, THE EKF HAS NO YAW SOURCE AT ALL". Now it has
+    # a second one.
+    #
+    # ⚠️ Wheel slip is the failure mode to watch. The steering estimate assumes the
+    # vehicle goes where the wheels point; on a slippery floor or during scrub it will
+    # not, and the IMU should win. If yaw degrades on loose surfaces, raise the yaw-rate
+    # variance in controllers.yaml rather than switching this back off.
     odom0_config: [false, false, false,
                    false, false, false,
                    true,  false, false,
-                   false, false, false,
+                   false, false, true,
                    false, false, false]
                    
     odom0_queue_size: 10

@@ -380,7 +380,62 @@ hardware_interface::return_type AckermannHardwareSystem::read(
       // when it greys out the display. Rare (order one frame in several thousand), so
       // a hold is a far better estimate than the fault value.
       if (!steer_fb.pot_fault) {
-          steering_.set_rack_position(steer_fb.angle);
+          // THE STEERING FEEDBACK CALIBRATION OF RECORD. Measured 2026-08-27.
+          //
+          // The Tiva firmware is FROZEN - it will not be changed - so this host-side
+          // mapping is not a stopgap, it is where pot counts become wheel angles for this
+          // vehicle. Treat it like any other calibration: if the linkage, the servo or
+          // the pot centre is ever disturbed, RE-MEASURE IT (procedure at the end of this
+          // comment) rather than nudging the constants.
+          //
+          // 0x130 steeringAngle does not agree with 0x120 steeringSetpoint. Measured on
+          // the wheels-up vehicle, 13 commanded levels through the normal
+          // /cmd_vel_teleop path, 12465 CAN frames:
+          //
+          //   SIGN IS INVERTED. Commanding LEFT drives the pot to the RIGHT of centre
+          //   (cmd +0.2409 -> pot -0.1550, implying count ~2413 against a centre of
+          //   1921). servo_feedback_cfg.h states the opposite convention explicitly -
+          //   "higher count = RIGHT = negative angle (REP-103)" - and its calibration is
+          //   internally coherent, so the hardware moves the other way from what that
+          //   calibration assumes. That is a PHYSICAL inversion, most likely dating from
+          //   the 2026-08-19 re-centre at the new 1520 us centre.
+          //
+          //   SCALE IS SHORT, AND ASYMMETRICALLY. Least squares per side:
+          //       LEFT  (cmd>0)  pot = -0.60526*cmd - 0.01010   rms 0.0017 rad
+          //       RIGHT (cmd<0)  pot = -0.78021*cmd - 0.01713   rms 0.0019 rad
+          //   The 1.289 gain ratio matches the linkage asymmetry the firmware measured
+          //   independently (1.196 from the pot, 1.210 from circle diameters), so the
+          //   two sides are genuinely different and ONE constant will not do.
+          //
+          // The branch is chosen from the COMMAND, not from the sign of the feedback:
+          // near centre the two fitted lines cross around -0.013 rad and the raw sign is
+          // meaningless there, whereas the command is always known exactly.
+          //
+          // VALIDATED ON GROUND-DRIVING DATA, not just on the rig it was fitted on.
+          // Bag 20260827_073550, 200 AMCL intervals, heading change vs AMCL:
+          //     steering yaw, uncorrected   median 0.0832 rad
+          //     steering yaw, corrected     median 0.0140 rad   <- 6x better
+          //     IMU yaw (/imu_corrected)    median 0.0078 rad
+          // The corrected estimate beats the IMU on p90 (0.0367 vs 0.0617) and on mean
+          // (0.0180 vs 0.0217) while losing on the median: precise-but-tailed IMU
+          // alongside coarser-but-better-behaved geometry. ekf.yaml now fuses BOTH, which
+          // is only sound because this correction exists - and which also removes the
+          // single point of failure imu_scale.py's own docstring warns about.
+          //
+          // RE-MEASUREMENT PROCEDURE (wheels up, ~4 minutes):
+          //   drive /cmd_vel_teleop at a fixed vx with wz stepped so that
+          //   delta = atan(L*wz/vx) walks +/-0.04 .. 0.24 rad, returning to centre between
+          //   steps so backlash loads the same way; capture can0 ids 0x120 and 0x130;
+          //   least-squares pot-vs-setpoint PER SIDE. Fit quality when these were taken
+          //   was rms 0.0017 (left) / 0.0019 (right) over 13 levels, and the constants
+          //   reproduced a held-out sweep to 0.0072 rad median.
+          constexpr double FB_A_LEFT  = -0.60526, FB_B_LEFT  = -0.01010;
+          constexpr double FB_A_RIGHT = -0.78021, FB_B_RIGHT = -0.01713;
+          const bool cmd_left = steering_.get_average_steering_cmd() >= 0.0;
+          const double corrected = cmd_left
+            ? (steer_fb.angle - FB_B_LEFT)  / FB_A_LEFT
+            : (steer_fb.angle - FB_B_RIGHT) / FB_A_RIGHT;
+          steering_.set_rack_position(corrected);
       } else {
           // Edge-triggered warnings fire once. A pot that fails and STAYS failed would
           // then freeze steering feedback silently forever, which is the same class of
@@ -525,15 +580,46 @@ hardware_interface::return_type AckermannHardwareSystem::write(
 
   double avg_steer_angle = steering_.get_average_steering_cmd();
 
-  // Host-side safety clamp at the REAL asymmetric mechanical travel (last ROS
-  // line of defense; the Tiva enforces the same limits in firmware). +left per
-  // REP-103 / DBC steeringSetpoint. The controller/URDF use a conservative
-  // symmetric 0.2421 so the Nav2 planner never plans an infeasible turn; this
-  // clamp instead permits the full real range and guards bypass command paths.
-  // LEFT +0.2421 rad (13.87 deg), RIGHT -0.3037 rad (17.40 deg) — Tiva
-  // steering_control.c / servo_cfg.h, confirmed by CAD.
-  constexpr double STEER_MAX_LEFT  =  0.2421;
-  constexpr double STEER_MAX_RIGHT = -0.3037;
+  // Host-side safety clamp, matching the firmware's own clamp exactly. +left per
+  // REP-103 / DBC steeringSetpoint. Its purpose is to bound bypass command paths
+  // that have no Nav2 limit in front of them; it must therefore permit the full
+  // real range and no less.
+  //
+  // 🔴 WAS +0.2421 / -0.3037, AND BOTH NUMBERS WERE WRONG (fixed 2026-08-27).
+  //
+  // Those were the PRE-2026-08-16 figures, and the firmware that supersedes them
+  // is explicit about what they actually were (Vehicle-Control, servo_cfg.h):
+  //
+  //     "The previous values (0.2421 / 0.3037) were NOT wheel-angle measurements.
+  //      0.3037 rad was the CAD DESIGN figure and 0.2421 was derived from it via
+  //      the pot; neither was ever checked against the road wheels. They were
+  //      wrong by ~2.3x (left) and ~1.9x (right) ... ROOT CAUSE: the pot is NOT
+  //      on the road wheel - it is upstream on the servo horn / linkage."
+  //
+  // The recalibration measured traced circle DIAMETERS at known commands and fitted
+  // delta_true = atan(L/(dia/2)) per side, so post-2026-08-16 the angle sent over CAN
+  // IS the true bicycle steering angle. The firmware then clamps it, SYMMETRICALLY:
+  //
+  //     steering_control.c:70-71   SC_LIMIT_LEFT_RAD  = +0.286f
+  //                                SC_LIMIT_RIGHT_RAD = -0.286f
+  //
+  // The old comment here claimed "the Tiva enforces the same limits in firmware".
+  // It does not, and the mismatch was not symmetric in its effect: LEFT was clipped
+  // at 0.2421 when the vehicle can reach 0.286 - 15% of the left lock discarded,
+  // raising the achievable left radius from L/tan(0.286)=0.80 m to
+  // L/tan(0.2421)=0.953 m - while RIGHT passed 0.3037 down only to be clamped to
+  // 0.286 by the Tiva anyway.
+  //
+  // ⚠️ THAT CLIP WAS THE ONLY ASYMMETRY IN THE SYSTEM. The mechanism is symmetric
+  // here, and vehicle data agrees: over 6342 samples with both wheels steering,
+  // cot(outer)-cot(inner) = 0.510 with ZERO spread, exactly track/wheelbase for an
+  // ideal symmetric linkage. nav2_amcl.yaml's "THE VEHICLE IS ASYMMETRIC" note, and
+  // the rejection of a 0.84 m turning radius as "only achievable turning RIGHT",
+  // both rest on this clamp rather than on the hardware. Revisit them together.
+  //
+  // Keep these two equal to SC_LIMIT_*_RAD. If the firmware clamp moves, move these.
+  constexpr double STEER_MAX_LEFT  =  0.286;
+  constexpr double STEER_MAX_RIGHT = -0.286;
   avg_steer_angle = std::clamp(avg_steer_angle, STEER_MAX_RIGHT, STEER_MAX_LEFT);
 
   // Host-side velocity sanity clamp (last ROS line of defense; guards bypass
