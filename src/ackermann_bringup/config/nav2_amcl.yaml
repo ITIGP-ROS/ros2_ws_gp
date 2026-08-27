@@ -318,9 +318,74 @@ controller_server:
         # determinable from the installed files, and if it resolves false MPPI
         # collision-checks this 0.38 x 0.22 m body as its INSCRIBED CIRCLE of radius
         # 0.06 m (the rear edge) — 5.6x smaller than circumscribed (item 94).
-        consider_footprint: false
+        #
+        # It WAS false, in contradiction of the line above, and that is what made the
+        # vehicle reverse into walls in bag 20260827_100210. Read obstacles_critic.cpp:
+        # costAtPose() returns pointCost() at base_link and only enters the footprint
+        # branch when consider_footprint_ is true; inCollision() is a switch on the
+        # EXACT values 254/253/255 and everything else returns false. At the moment of
+        # the failure the point cost under base_link was 164 — matching no case — while
+        # the true footprint read 254 with 3 of 9 rear-edge samples lethal. Detection
+        # needs cost >= 253, which at cost_scaling_factor 5.0 anchored to the 0.06 m
+        # inscribed radius means an obstacle within 0.06 m of base_link, i.e. INSIDE the
+        # body. A rear-corner collision (the corners sit 0.125 m out) was therefore
+        # undetectable before contact, and the planner — which does use the footprint —
+        # then refused to plan from where MPPI had driven: 41x "Starting point in lethal
+        # space!". nav2 flags this configuration itself; initialize() tests
+        # getUseRadius() == consider_footprint_ and, with a footprint costmap and this
+        # false, logs "Inconsistent configuration in collision checking" on every start.
+        #
+        # COST OF TRUE, measured: nothing. costAtPose() only rasterises the footprint
+        # when the point cost already exceeds possibly_inscribed_cost_, which
+        # findCircumscribedCost() sets to the inflation cost at the circumscribed
+        # radius — so only within 0.338 m of an obstacle. That shortcut requires
+        # inflation_radius >= circumscribed radius, which 0.40 vs 0.338 satisfies; the
+        # "400k evals/s" warning elsewhere in this file describes the UNOPTIMISED path
+        # that appears when it does not. Sim A/B over a forced multi-point turn: 4/4
+        # goals either way, MPPI loop period 100.0 ms median and nothing over 150 ms
+        # with it on. That was a 16-core laptop — re-measure the period on the Jetson.
+        #
+        # SHIP IT ALONE. Enabling this together with a 0.05 rad/s wz deadband on the
+        # velocity smoother loses the arena course's goal 2 (the detour around the
+        # interior stub). Isolated on that goal, 4 independent trials per config:
+        #     baseline (both off)       4/4   66s  54s  50s  46s
+        #     consider_footprint only   4/4   45s  68s  42s  43s   <- this line
+        #     wz deadband only          4/4   71s  45s  54s  69s
+        #     both together             1/4   50s  TIMEOUT  ABORT 26s  TIMEOUT
+        # Each change alone is safe; the pair is not. The interaction is NOT understood
+        # — the plausible reading is that threading the stub needs small, low-rate
+        # steering corrections that the deadband discards — so do not re-introduce the
+        # deadband without re-running this table. On its own this is also the fastest
+        # config measured on that goal (median 44 s against the baseline's 52 s).
+        consider_footprint: true
         cost_weight: 4.0
         collision_cost: 10000.0
+        # 0.20 WAS TRIED AND REVERTED, 2026-08-27. Keep this at 0.10.
+        #
+        # The case for 0.20 is real: it is the standoff lever, NOT cost_scaling_factor,
+        # because the failure was a hard check that never fired and no decay rate puts a
+        # cost of 164 into inCollision()'s switch. Replaying the reverse episode of bag
+        # 20260827_100210, this term at 0.20 would have accumulated 6.8 cost units
+        # against 0.8 at 0.10 — other critics score on distances of 0.1-2.0 m at weights
+        # 5-6, so 0.8 is invisible and 6.8 is decisive — and it starts ~0.8 s before the
+        # hard rejection, which matters because even with consider_footprint on that
+        # episode was only caught at +2.0 s, the exact edge of the 2.0 s horizon.
+        #
+        # It does not survive contact with the deadband_velocity change below. Arena
+        # course, goal 2 (the detour around the interior stub), 4 goals per run:
+        #     baseline                              4/4   goal2 47.2 s / 62.5 s
+        #     consider_footprint only               4/4   goal2 45.7 s
+        #     wz deadband only                      4/4   goal2 44.9 s
+        #     consider_footprint + margin 0.20      4/4   goal2 47.7 s
+        #     consider_footprint + wz deadband      4/4   goal2 59.0 s
+        #     ALL THREE                             2/4   goal2 TIMEOUT at 90 s
+        #     ALL THREE (repeat, x2)                3/4   goal2 TIMEOUT at 90 s
+        # Neither change alone breaks it; together they do, reproducibly. The likely
+        # reading is that threading past the stub at a 0.20 m standoff needs exactly the
+        # small, low-rate steering corrections the 0.05 rad/s wz deadband now discards.
+        # The deadband's benefit is measured; this one's is an argument. If the horizon
+        # margin is wanted later, buy it by raising time_steps instead, and re-run the
+        # arena course before believing it.
         collision_margin_distance: 0.10
         near_goal_distance: 0.25
       GoalCritic:
@@ -745,6 +810,13 @@ velocity_smoother:
     # true makes the smoother scale the components together, preserving vx:wz and
     # therefore the radius. Cornering linear speed drops slightly when the angular rate
     # is limited -- that coupling is correct for a car and is the point of the change.
+    #
+    # ⚠️ REFUTED as a fix, bag 20260827_100210 with this change deployed. Re-running the
+    # same diagnostic: MPPI out max 0.1936 rad and 0.0% past the clamp, smoother out max
+    # 0.5040 rad and 0.6% past it, and across 1009 matched pairs this node still
+    # INCREASED the implied steering in 39.5% of them, by up to 0.3974 rad. That is
+    # 40.7% before and 39.5% after — unchanged. Keep it (the vx:wz coupling is still
+    # right for a car) but do not count it as the fix; see deadband_velocity below.
     scale_velocities: true
     feedback: "OPEN_LOOP"
     # 3rd element (wz) = vx_max/min_radius = 0.4/1.00 = 0.40 — the FOURTH copy of this
@@ -757,5 +829,36 @@ velocity_smoother:
     max_decel: [-0.4, 0.0, -0.8]
     odom_topic: "odom"
     odom_duration: 0.1
+    # 3rd element 0.0 -> 0.05. MEASURED, bag 20260827_100210.
+    #
+    # scale_velocities above did NOT stop this node implying steering angles past the
+    # mechanical stop, and bucketing its output by speed says why. Every violation lives
+    # in ONE band:
+    #     |vx| 0.03-0.06   n=201   median |delta| 0.1397   max 0.5040   6.5% past 0.286
+    #     |vx| 0.06-0.10   n=241   median 0.0836          max 0.2791   0.0%
+    #     |vx| 0.10-0.20   n=461   median 0.0596          max 0.2132   0.0%
+    #     |vx| 0.20-0.30   n=625   median 0.0477          max 0.1826   0.0%
+    #     |vx| 0.30-0.45   n=353   median 0.0650          max 0.1749   0.0%
+    # Above 0.06 m/s nothing exceeds the clamp. The mechanism is arithmetic: max_accel
+    # is [0.4, 0, 0.8], so vx and wz are rate-limited on different budgets, and when
+    # MPPI reverses direction vx is dragged through the crawl band while wz is still
+    # finite. delta = atan(wheelbase * wz / |vx|) diverges as vx -> 0. The x element of
+    # this deadband protected vx and left wz unguarded, so the blow-up landed exactly
+    # where vx was smallest and the rack was slammed to its stop while barely moving.
+    #
+    # 0.05 rad/s would zero wz in the same band the x element already zeroes vx. Sim A/B
+    # over a forced multi-point turn: smoother inflation 14.45% -> 9.75%, steering
+    # clamp time 3.62% -> 2.27%, and in the straight-corridor runs clamp time went to
+    # exactly 0.00%, 4/4 goals. That is the only benefit any of the 2026-08-27 candidate
+    # changes showed in simulation.
+    #
+    # ⚠️ NOT SHIPPED, left at 0.0 — and the reason is an INTERACTION, not this change.
+    # On its own it is 4/4 on the arena's goal 2 over four trials. Combined with
+    # ObstaclesCritic's consider_footprint: true (which is now enabled) it drops that
+    # goal to 1/4. consider_footprint is the root-cause fix for the reversing failure
+    # and wins the tie; this stays off until the interaction is understood. The full
+    # 4-way table is in the note at consider_footprint. If you re-try this, re-run that
+    # table — a single passing run on this leg means nothing, its baseline duration
+    # spans 46-71 s against a 90 s cap.
     deadband_velocity: [0.03, 0.0, 0.0]
     velocity_timeout: 1.0
